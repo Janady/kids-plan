@@ -8,11 +8,17 @@ use sqlx::SqlitePool;
 use std::str::FromStr;
 use tauri::Manager;
 
+#[tauri::command]
+fn check_storage_accessible() -> bool {
+    std::path::Path::new("/storage/emulated/0").is_dir()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_os::init())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -44,6 +50,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            check_storage_accessible,
             get_setting,
             set_setting,
             add_plan,

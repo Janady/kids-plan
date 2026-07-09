@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "android-cap",
+  "description": "Capability for Android and Android TV",
+  "platforms": ["android"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "dialog:allow-open"
+  ]
+}

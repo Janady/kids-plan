@@ -9,6 +9,22 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mpeg", "3gp",
 ];
 
+// Android SAF "primary" document tree URI → real path on /storage/emulated/0
+fn normalize_folder_path(raw: &str) -> String {
+    const SAF_PREFIX: &str =
+        "content://com.android.externalstorage.documents/tree/primary%3A";
+    if let Some(rest) = raw.strip_prefix(SAF_PREFIX) {
+        let decoded = rest.replace("%2F", "/").replace("%20", " ").replace("%3A", ":");
+        if decoded.is_empty() {
+            "/storage/emulated/0".to_string()
+        } else {
+            format!("/storage/emulated/0/{}", decoded)
+        }
+    } else {
+        raw.to_string()
+    }
+}
+
 fn is_video_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -178,10 +194,11 @@ pub async fn add_plan(
         .map_err(|e| e.to_string())?
         .ok_or("No folder selected")?;
 
-    let folder_path_str = match folder_path {
+    let raw_path = match folder_path {
         tauri_plugin_dialog::FilePath::Path(p) => p.to_string_lossy().into_owned(),
         tauri_plugin_dialog::FilePath::Url(u) => u.to_string(),
     };
+    let folder_path_str = normalize_folder_path(&raw_path);
 
     let folder = std::path::Path::new(&folder_path_str);
     let plan_name = name.unwrap_or_else(|| {
@@ -302,7 +319,8 @@ pub async fn rescan_plan(
         .await
         .map_err(|e| e.to_string())?;
 
-    let folder = std::path::Path::new(&plan.folder_path);
+    let real_path = normalize_folder_path(&plan.folder_path);
+    let folder = std::path::Path::new(&real_path);
     let disk_videos = scan_videos(folder);
     let disk_paths: std::collections::HashSet<String> =
         disk_videos.iter().map(|(p, _, _)| p.clone()).collect();

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
+import { usePlatform } from "../hooks/usePlatform";
 
 function formatSeconds(s: number): string {
   const h = Math.floor(s / 3600);
@@ -58,6 +59,7 @@ export function NavBar() {
   const pct = Math.min(100, Math.round((todayWatchedSeconds / dailyLimitSeconds) * 100));
   const location = useLocation();
   const [showModal, setShowModal] = useState(false);
+  const { isTV } = usePlatform();
 
   const handleModeToggle = async () => {
     if (isParentMode) {
@@ -99,7 +101,11 @@ export function NavBar() {
         </div>
       )}
 
-      <nav className="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center gap-5">
+      <nav className={`bg-gray-900 border-gray-800 px-4 flex items-center gap-5 ${
+        isTV
+          ? "fixed bottom-0 left-0 right-0 z-40 border-t py-4 text-base"
+          : "border-b py-3"
+      }`}>
         <Link
           to="/"
           className={`font-semibold text-base hover:text-sky-400 transition-colors ${

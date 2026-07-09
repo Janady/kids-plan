@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { getTodaySchedule } from "../api/schedule";
 import { addPlan, listPlans } from "../api/plans";
 import { useAppContext } from "../context/AppContext";
+import { usePlatform } from "../hooks/usePlatform";
 import type { TodayPlanItem, TodayPendingItem, Plan } from "../types";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -92,10 +93,13 @@ function TaskCard({ task, planId, planName, isLocked }: TaskCardProps) {
   return (
     <div
       onClick={handleClick}
-      className={`group rounded-xl overflow-hidden border transition-all ${
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleClick(); }}
+      tabIndex={isLocked ? -1 : 0}
+      role="button"
+      className={`group rounded-xl overflow-hidden border transition-all focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-gray-950 ${
         isLocked
           ? "border-gray-800 opacity-50 cursor-not-allowed"
-          : "border-gray-700 hover:border-sky-500 cursor-pointer hover:shadow-lg hover:shadow-sky-900/20"
+          : "border-gray-700 hover:border-sky-500 focus:border-sky-500 cursor-pointer hover:shadow-lg hover:shadow-sky-900/20 focus:shadow-lg focus:shadow-sky-900/20"
       } bg-gray-800`}
     >
       {/* Thumbnail */}
@@ -163,7 +167,10 @@ function MiniPlanCard({ plan }: { plan: Plan }) {
   return (
     <div
       onClick={() => navigate(`/plan/${plan.id}`)}
-      className="bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-sky-600 rounded-lg px-4 py-3 cursor-pointer transition-all"
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") navigate(`/plan/${plan.id}`); }}
+      tabIndex={0}
+      role="button"
+      className="bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-sky-600 focus:border-sky-500 rounded-lg px-4 py-3 cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-gray-950"
     >
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-sm font-medium text-gray-200 truncate">{plan.name}</span>
@@ -192,6 +199,7 @@ function MiniPlanCard({ plan }: { plan: Plan }) {
 
 export default function HomePage() {
   const { isLimitExceeded } = useAppContext();
+  const { isTV } = usePlatform();
   const [todayItems, setTodayItems] = useState<TodayPlanItem[]>([]);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
   const [showAllPlans, setShowAllPlans] = useState(false);
@@ -293,8 +301,8 @@ export default function HomePage() {
         </div>
       ) : (
         <div className="mb-8">
-          {/* Responsive grid: 1 col on mobile, 2 on sm, 3 on lg, 4 on xl */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {/* Responsive grid: 1 col on mobile, 2 on sm, 3 on lg, 4 on xl; TV: fixed 3 cols */}
+          <div className={`grid gap-4 ${isTV ? "grid-cols-3" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
             {allPendingTasks.map(({ task, planId, planName }) => (
               <TaskCard
                 key={task.video_id}
