@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Plan } from "../types";
 
-export const addPlan = (name?: string): Promise<Plan> =>
-  invoke("add_plan", { name: name ?? null });
+export const addPlan = (folderPath: string, name?: string): Promise<Plan> =>
+  invoke("add_plan", { folderPath, name: name ?? null });
 
 export const listPlans = (): Promise<Plan[]> => invoke("list_plans");
 

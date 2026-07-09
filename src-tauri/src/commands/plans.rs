@@ -146,7 +146,16 @@ fn build_plan_with_counts(r: PlanRow, next: Option<NextVideoRow>, is_locked_by_p
     }
 }
 
-fn scan_videos(folder: &std::path::Path) -> Vec<(String, String, i64)> {
+fn scan_videos(folder: &std::path::Path) -> Result<Vec<(String, String, i64)>, String> {
+    // Fail early with a clear error instead of silently returning empty on permission denied
+    std::fs::read_dir(folder).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            "没有读取此文件夹的权限，请在 系统设置 › 应用 › 特殊权限 › 所有文件访问权限 中开启本应用的权限".to_string()
+        } else {
+            format!("无法读取文件夹：{e}")
+        }
+    })?;
+
     let mut entries: Vec<std::path::PathBuf> = WalkDir::new(folder)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -154,7 +163,7 @@ fn scan_videos(folder: &std::path::Path) -> Vec<(String, String, i64)> {
         .map(|e| e.path().to_path_buf())
         .collect();
     entries.sort();
-    entries
+    Ok(entries
         .into_iter()
         .enumerate()
         .map(|(i, p)| {
@@ -165,7 +174,7 @@ fn scan_videos(folder: &std::path::Path) -> Vec<(String, String, i64)> {
                 .to_string();
             (p.to_string_lossy().into_owned(), title, i as i64)
         })
-        .collect()
+        .collect())
 }
 
 const PLAN_SELECT: &str =
@@ -177,28 +186,11 @@ const PLAN_SELECT: &str =
 
 #[tauri::command]
 pub async fn add_plan(
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
     name: Option<String>,
+    folder_path: String,
 ) -> Result<PlanWithCounts, String> {
-    use tauri_plugin_dialog::DialogExt;
-    use tokio::sync::oneshot;
-
-    let (tx, rx) = oneshot::channel();
-    app.dialog().file().pick_folder(move |path| {
-        let _ = tx.send(path);
-    });
-
-    let folder_path = rx
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("No folder selected")?;
-
-    let raw_path = match folder_path {
-        tauri_plugin_dialog::FilePath::Path(p) => p.to_string_lossy().into_owned(),
-        tauri_plugin_dialog::FilePath::Url(u) => u.to_string(),
-    };
-    let folder_path_str = normalize_folder_path(&raw_path);
+    let folder_path_str = normalize_folder_path(&folder_path);
 
     let folder = std::path::Path::new(&folder_path_str);
     let plan_name = name.unwrap_or_else(|| {
@@ -209,7 +201,7 @@ pub async fn add_plan(
             .to_string()
     });
 
-    let videos = scan_videos(folder);
+    let videos = scan_videos(folder)?;
     let now = now_str();
     let mut tx_db = state.db.begin().await.map_err(|e| e.to_string())?;
 
@@ -321,7 +313,7 @@ pub async fn rescan_plan(
 
     let real_path = normalize_folder_path(&plan.folder_path);
     let folder = std::path::Path::new(&real_path);
-    let disk_videos = scan_videos(folder);
+    let disk_videos = scan_videos(folder)?;
     let disk_paths: std::collections::HashSet<String> =
         disk_videos.iter().map(|(p, _, _)| p.clone()).collect();
 

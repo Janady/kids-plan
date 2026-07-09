@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { getVideoUrl } from "../api/videoSrc";
 import { listVideosForPlan } from "../api/videos";
 import { updateVideoStatus, updateVideoProgress, setVideoDuration } from "../api/videos";
 import { useWatchSession } from "../hooks/useWatchSession";
@@ -160,7 +160,7 @@ export default function PlayerPage() {
     );
   }
 
-  const src = convertFileSrc(video.file_path);
+  const src = getVideoUrl(video.file_path);
 
   return (
     <div>

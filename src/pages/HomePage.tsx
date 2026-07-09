@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { getTodaySchedule } from "../api/schedule";
 import { addPlan, listPlans } from "../api/plans";
+import { getVideoUrl } from "../api/videoSrc";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
+import { FolderPickerModal } from "../components/FolderPickerModal";
 import type { TodayPlanItem, TodayPendingItem, Plan } from "../types";
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
 
 function formatTime(s: number): string {
   const h = Math.floor(s / 3600);
@@ -15,6 +15,12 @@ function formatTime(s: number): string {
   const sec = s % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function formatSeconds(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 const PLANS_PER_PAGE = 6;
@@ -53,7 +59,7 @@ function LazyVideoThumb({ filePath }: { filePath: string }) {
       {inView && (
         <video
           ref={videoRef}
-          src={convertFileSrc(filePath)}
+          src={getVideoUrl(filePath)}
           preload="metadata"
           muted
           playsInline
@@ -198,13 +204,14 @@ function MiniPlanCard({ plan }: { plan: Plan }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const { isLimitExceeded } = useAppContext();
-  const { isTV } = usePlatform();
+  const { isLimitExceeded, todayWatchedSeconds, dailyLimitSeconds } = useAppContext();
+  const { isTV, isAndroid } = usePlatform();
   const [todayItems, setTodayItems] = useState<TodayPlanItem[]>([]);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
   const [showAllPlans, setShowAllPlans] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
 
   const loadData = useCallback(async () => {
     const [schedule, plans] = await Promise.all([getTodaySchedule(), listPlans()]);
@@ -214,15 +221,31 @@ export default function HomePage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const handleAddPlan = async () => {
+  const doAddPlan = async (folderPath: string) => {
     setAdding(true);
     setAddError(null);
     try {
-      await addPlan();
+      await addPlan(folderPath);
       await loadData();
     } catch (e) {
-      const msg = String(e);
-      if (!msg.includes("No folder selected")) setAddError(msg);
+      setAddError(String(e));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleAddPlan = async () => {
+    if (isAndroid) {
+      setShowFolderPicker(true);
+      return;
+    }
+    setAdding(true);
+    setAddError(null);
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (selected) await doAddPlan(String(selected));
+    } catch (e) {
+      setAddError(String(e));
     } finally {
       setAdding(false);
     }
@@ -251,9 +274,15 @@ export default function HomePage() {
 
   return (
     <div>
+      {showFolderPicker && (
+        <FolderPickerModal
+          onSelect={(path) => { setShowFolderPicker(false); doAddPlan(path); }}
+          onCancel={() => setShowFolderPicker(false)}
+        />
+      )}
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-gray-100">今日学习</h1>
           <p className="text-xs text-gray-500 mt-0.5">
             {new Date().toLocaleDateString("zh-CN", {
@@ -262,6 +291,25 @@ export default function HomePage() {
               day: "numeric",
             })}
           </p>
+          {/* 手机端进度条（NavBar 不显示时在此展示） */}
+          {isAndroid && !isTV && (() => {
+            const pct = Math.min(100, Math.round((todayWatchedSeconds / dailyLimitSeconds) * 100));
+            return (
+              <div className="flex items-center gap-2 mt-2">
+                <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-sky-500"
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className={`text-xs shrink-0 ${pct >= 100 ? "text-red-400" : "text-gray-500"}`}>
+                  {formatSeconds(todayWatchedSeconds)}/{formatSeconds(dailyLimitSeconds)}
+                </span>
+              </div>
+            );
+          })()}
         </div>
         <button
           onClick={handleAddPlan}

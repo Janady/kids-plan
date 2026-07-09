@@ -59,13 +59,14 @@ export function NavBar() {
   const pct = Math.min(100, Math.round((todayWatchedSeconds / dailyLimitSeconds) * 100));
   const location = useLocation();
   const [showModal, setShowModal] = useState(false);
-  const { isTV } = usePlatform();
+  const { isTV, isAndroid } = usePlatform();
+  // 手机端（Android 非 TV）隐藏进度条，节省空间
+  const showProgress = !isAndroid || isTV;
 
   const handleModeToggle = async () => {
     if (isParentMode) {
       await toggleParentMode();
     } else {
-      // Check if password is set — if modal needed, show it; otherwise toggle directly
       const result = await toggleParentMode("");
       if (!result.success) {
         setShowModal(true);
@@ -78,7 +79,6 @@ export function NavBar() {
     if (result.success) {
       setShowModal(false);
     }
-    // If failed, modal stays open with error visible via result
   };
 
   const navLink = (to: string, label: string) => (
@@ -104,7 +104,7 @@ export function NavBar() {
       <nav className={`bg-gray-900 border-gray-800 px-4 flex items-center gap-5 ${
         isTV
           ? "fixed bottom-0 left-0 right-0 z-40 border-t py-4 text-base"
-          : "border-b py-3"
+          : "border-b py-2.5"
       }`}>
         <Link
           to="/"
@@ -131,20 +131,22 @@ export function NavBar() {
             {isParentMode ? "👨 家长模式" : "👶 儿童模式"}
           </button>
 
-          {/* Daily progress */}
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <span className="text-xs">
-              {formatSeconds(todayWatchedSeconds)}/{formatSeconds(dailyLimitSeconds)}
-            </span>
-            <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${
-                  pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-sky-500"
-                }`}
-                style={{ width: `${pct}%` }}
-              />
+          {/* Daily progress — hidden on Android phone to save space */}
+          {showProgress && (
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <span className="text-xs">
+                {formatSeconds(todayWatchedSeconds)}/{formatSeconds(dailyLimitSeconds)}
+              </span>
+              <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-sky-500"
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </nav>
 

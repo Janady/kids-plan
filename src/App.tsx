@@ -40,7 +40,7 @@ export default function App() {
       <NavBar />
       <StoragePermissionBanner />
       <DailyLimitBanner />
-      <main className={`flex-1 container mx-auto px-4 py-6 max-w-6xl${isTV ? " pb-20" : ""}`}>
+      <main className={`flex-1 container mx-auto px-4 py-4 max-w-6xl${isTV ? " pb-20" : ""}`}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/plan/:planId" element={<PlanPage />} />

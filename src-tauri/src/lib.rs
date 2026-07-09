@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod video_server;
 
 use commands::{plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
 use db::AppState;
@@ -8,9 +9,37 @@ use sqlx::SqlitePool;
 use std::str::FromStr;
 use tauri::Manager;
 
+#[derive(serde::Serialize)]
+struct DirEntry {
+    name: String,
+    path: String,
+}
+
+#[tauri::command]
+fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    let mut entries: Vec<DirEntry> = std::fs::read_dir(&path)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+        .map(|e| DirEntry {
+            name: e.file_name().to_string_lossy().into_owned(),
+            path: e.path().to_string_lossy().into_owned(),
+        })
+        .collect();
+    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(entries)
+}
+
+#[tauri::command]
+fn get_video_server_port() -> u16 {
+    video_server::get_port()
+}
+
 #[tauri::command]
 fn check_storage_accessible() -> bool {
-    std::path::Path::new("/storage/emulated/0").is_dir()
+    std::fs::read_dir("/storage/emulated/0")
+        .map(|_| true)
+        .unwrap_or(false)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,6 +72,9 @@ pub fn run() {
                     .await
                     .expect("Failed to run migrations");
 
+                // Start local video HTTP server (needed for Android Range-request support)
+                video_server::start().await;
+
                 pool
             });
 
@@ -51,6 +83,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             check_storage_accessible,
+            list_dir,
+            get_video_server_port,
             get_setting,
             set_setting,
             add_plan,
