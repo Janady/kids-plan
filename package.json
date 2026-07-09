@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:win": "bun tauri build",
+    "build:portable": "bun scripts/build-portable.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -9,6 +9,22 @@ use sqlx::SqlitePool;
 use std::str::FromStr;
 use tauri::Manager;
 
+/// On Windows: if a `.portable` file sits next to the exe, store data in `<exe-dir>/data/`
+/// instead of the system AppData folder. This enables zero-install portable mode.
+fn portable_data_dir(default: std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                if dir.join(".portable").exists() {
+                    return dir.join("data");
+                }
+            }
+        }
+    }
+    default
+}
+
 #[derive(serde::Serialize)]
 struct DirEntry {
     name: String,
@@ -49,10 +65,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .setup(|app| {
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("Failed to resolve app data directory");
+            let data_dir = portable_data_dir(
+                app.path().app_data_dir().expect("Failed to resolve app data directory"),
+            );
             std::fs::create_dir_all(&data_dir)?;
 
             let db_path = data_dir.join("video_plan.db");

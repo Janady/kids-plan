@@ -4,6 +4,9 @@ This template should help get you started developing with Tauri, React and Types
 
 ## build
 
+bun run build:win or bun tauri build
+bun run build:portable
+
 ```shell
 bun tauri dev
 bun tauri android dev
