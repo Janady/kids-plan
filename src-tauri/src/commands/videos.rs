@@ -17,6 +17,7 @@ pub struct Video {
     pub status: String,
     pub progress_seconds: i64,
     pub sort_order: i64,
+    pub media_type: String,
     pub updated_at: String,
 }
 
@@ -27,7 +28,7 @@ pub async fn list_videos_for_plan(
 ) -> Result<Vec<Video>, String> {
     let videos: Vec<Video> = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
-                progress_seconds, sort_order, updated_at
+                progress_seconds, sort_order, media_type, updated_at
          FROM videos
          WHERE plan_id = ?
          ORDER BY
@@ -44,6 +45,63 @@ pub async fn list_videos_for_plan(
     .await
     .map_err(|e| e.to_string())?;
     Ok(videos)
+}
+
+// Recompute and persist a plan's overall status from its videos.
+// Background-music audio is excluded so a mixed plan can still reach "completed".
+async fn recompute_plan_status(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    plan_id: i64,
+    now: &str,
+) -> Result<(), String> {
+    let (is_background,): (i64,) = sqlx::query_as("SELECT is_background FROM plans WHERE id = ?")
+        .bind(plan_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (total, watched, not_watched): (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN status = 'watched' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status = 'not_watched' THEN 1 ELSE 0 END), 0)
+         FROM videos
+         WHERE plan_id = ? AND NOT (? = 1 AND media_type = 'audio')",
+    )
+    .bind(plan_id)
+    .bind(is_background)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let plan_status = if total > 0 && watched == total {
+        "completed"
+    } else if total > 0 && not_watched == total {
+        "not_started"
+    } else {
+        "in_progress"
+    };
+
+    sqlx::query("UPDATE plans SET status = ?, updated_at = ? WHERE id = ?")
+        .bind(plan_status)
+        .bind(now)
+        .bind(plan_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn fetch_video(db: &sqlx::SqlitePool, video_id: i64) -> Result<Video, String> {
+    sqlx::query_as(
+        "SELECT id, plan_id, file_path, title, duration_seconds, status,
+                progress_seconds, sort_order, media_type, updated_at
+         FROM videos WHERE id = ?",
+    )
+    .bind(video_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -69,47 +127,45 @@ pub async fn update_video_status(
         .await
         .map_err(|e| e.to_string())?;
 
-    let (total, watched, not_watched): (i64, i64, i64) = sqlx::query_as(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(CASE WHEN status = 'watched' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN status = 'not_watched' THEN 1 ELSE 0 END), 0)
-         FROM videos WHERE plan_id = ?",
-    )
-    .bind(plan_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
+    recompute_plan_status(&mut tx, plan_id, &now).await?;
 
-    let plan_status = if total > 0 && watched == total {
-        "completed"
-    } else if total > 0 && not_watched == total {
-        "not_started"
-    } else {
-        "in_progress"
-    };
+    tx.commit().await.map_err(|e| e.to_string())?;
 
-    sqlx::query("UPDATE plans SET status = ?, updated_at = ? WHERE id = ?")
-        .bind(plan_status)
-        .bind(&now)
-        .bind(plan_id)
+    fetch_video(&state.db, video_id).await
+}
+
+// Mark a video as watched *without* counting toward today's quota.
+// Used for content the user already watched elsewhere: it's removed from the
+// pending list and counts toward plan completion, but its updated_at is set to
+// a sentinel past date so get_today_schedule won't treat it as "done today".
+#[tauri::command]
+pub async fn mark_video_watched_earlier(
+    state: State<'_, AppState>,
+    video_id: i64,
+) -> Result<Video, String> {
+    let now = now_str();
+    // A fixed past timestamp — never matches date('now','localtime')
+    const PAST: &str = "1970-01-01T00:00:00+00:00";
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+
+    sqlx::query("UPDATE videos SET status = 'watched', updated_at = ? WHERE id = ?")
+        .bind(PAST)
+        .bind(video_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
 
+    let (plan_id,): (i64,) = sqlx::query_as("SELECT plan_id FROM videos WHERE id = ?")
+        .bind(video_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    recompute_plan_status(&mut tx, plan_id, &now).await?;
+
     tx.commit().await.map_err(|e| e.to_string())?;
 
-    let video: Video = sqlx::query_as(
-        "SELECT id, plan_id, file_path, title, duration_seconds, status,
-                progress_seconds, sort_order, updated_at
-         FROM videos WHERE id = ?",
-    )
-    .bind(video_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(video)
+    fetch_video(&state.db, video_id).await
 }
 
 #[tauri::command]

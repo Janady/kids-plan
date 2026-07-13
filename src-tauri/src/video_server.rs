@@ -19,6 +19,9 @@ pub async fn start() -> u16 {
     tokio::spawn(async move {
         loop {
             if let Ok((socket, _)) = listener.accept().await {
+                // Disable Nagle's algorithm: send media bytes immediately instead of
+                // batching them, which removes periodic latency spikes during playback.
+                let _ = socket.set_nodelay(true);
                 tokio::spawn(handle(socket));
             }
         }
@@ -176,12 +179,16 @@ async fn serve_file(
         return;
     }
 
-    // Stream file in 128 KiB chunks
+    // Stream with a large read-ahead buffer. Reading ~1 MiB per disk op (vs many
+    // small reads) and writing 256 KiB chunks keeps the socket fed steadily, which
+    // prevents the periodic buffer-underrun stalls the WebView player showed every
+    // few minutes.
+    let mut reader = tokio::io::BufReader::with_capacity(1 << 20, file);
     let mut remaining = content_length;
-    let mut chunk = vec![0u8; 131_072];
+    let mut chunk = vec![0u8; 262_144];
     while remaining > 0 {
         let to_read = (remaining as usize).min(chunk.len());
-        match file.read(&mut chunk[..to_read]).await {
+        match reader.read(&mut chunk[..to_read]).await {
             Ok(0) => break,
             Ok(n) => {
                 if socket.write_all(&chunk[..n]).await.is_err() {
@@ -253,6 +260,14 @@ fn guess_mime(path: &str) -> &'static str {
         "flv" => "video/x-flv",
         "wmv" => "video/x-ms-wmv",
         "3gp" => "video/3gpp",
+        "mp3" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "aac" => "audio/aac",
+        "ogg" | "opus" => "audio/ogg",
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "wma" => "audio/x-ms-wma",
+        "aiff" => "audio/aiff",
         _ => "application/octet-stream",
     }
 }

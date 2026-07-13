@@ -54,13 +54,12 @@ function PasswordModal({
 }
 
 export function NavBar() {
-  const { todayWatchedSeconds, dailyLimitSeconds, isParentMode, toggleParentMode } =
+  const { todayWatchedSeconds, todayAudioSeconds, dailyLimitSeconds, isParentMode, toggleParentMode } =
     useAppContext();
   const pct = Math.min(100, Math.round((todayWatchedSeconds / dailyLimitSeconds) * 100));
   const location = useLocation();
   const [showModal, setShowModal] = useState(false);
   const { isTV, isAndroid } = usePlatform();
-  // 手机端（Android 非 TV）隐藏进度条，节省空间
   const showProgress = !isAndroid || isTV;
 
   const handleModeToggle = async () => {
@@ -94,7 +93,6 @@ export function NavBar() {
 
   return (
     <>
-      {/* Parent mode banner */}
       {isParentMode && (
         <div className="bg-amber-900/60 border-b border-amber-700/50 px-4 py-1.5 text-xs text-amber-300 text-center">
           家长模式 · 播放不记录学习进度
@@ -119,7 +117,6 @@ export function NavBar() {
         {isParentMode && navLink("/settings", "设置")}
 
         <div className="ml-auto flex items-center gap-3">
-          {/* Mode toggle */}
           <button
             onClick={handleModeToggle}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all ${
@@ -131,12 +128,18 @@ export function NavBar() {
             {isParentMode ? "👨 家长模式" : "👶 儿童模式"}
           </button>
 
-          {/* Daily progress — hidden on Android phone to save space */}
           {showProgress && (
             <div className="flex items-center gap-2 text-sm text-gray-400">
-              <span className="text-xs">
-                {formatSeconds(todayWatchedSeconds)}/{formatSeconds(dailyLimitSeconds)}
-              </span>
+              <div className="flex flex-col items-end gap-0.5">
+                <span className="text-xs leading-none">
+                  {formatSeconds(todayWatchedSeconds)}/{formatSeconds(dailyLimitSeconds)}
+                </span>
+                {todayAudioSeconds > 0 && (
+                  <span className="text-[10px] text-purple-400 leading-none">
+                    🎵 {formatSeconds(todayAudioSeconds)}
+                  </span>
+                )}
+              </div>
               <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all ${

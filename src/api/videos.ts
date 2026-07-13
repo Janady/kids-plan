@@ -9,6 +9,10 @@ export const updateVideoStatus = (
   status: "watching" | "watched"
 ): Promise<Video> => invoke("update_video_status", { videoId, status });
 
+// Mark as watched without using today's quota (content seen elsewhere).
+export const markVideoWatchedEarlier = (videoId: number): Promise<Video> =>
+  invoke("mark_video_watched_earlier", { videoId });
+
 export const updateVideoProgress = (
   videoId: number,
   progressSeconds: number

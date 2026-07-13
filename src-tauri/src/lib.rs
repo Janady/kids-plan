@@ -9,8 +9,6 @@ use sqlx::SqlitePool;
 use std::str::FromStr;
 use tauri::Manager;
 
-/// On Windows: if a `.portable` file sits next to the exe, store data in `<exe-dir>/data/`
-/// instead of the system AppData folder. This enables zero-install portable mode.
 fn portable_data_dir(default: std::path::PathBuf) -> std::path::PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -87,7 +85,6 @@ pub fn run() {
                     .await
                     .expect("Failed to run migrations");
 
-                // Start local video HTTP server (needed for Android Range-request support)
                 video_server::start().await;
 
                 pool
@@ -108,12 +105,20 @@ pub fn run() {
             rescan_plan,
             activate_plan,
             deactivate_plan,
+            update_plan_media_settings,
+            list_background_audio,
+            get_recent_background_tracks,
+            delete_background_track,
+            set_plan_background,
             list_videos_for_plan,
             update_video_status,
+            mark_video_watched_earlier,
             update_video_progress,
             set_video_duration,
             record_watch_session,
             get_today_watched_seconds,
+            get_today_audio_seconds,
+            record_background_play,
             check_daily_limit,
             get_today_schedule,
             get_daily_stats,

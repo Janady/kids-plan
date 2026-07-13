@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAppContext } from "../context/AppContext";
+import { LoopIcon } from "./LoopIcon";
+import { PlayIcon, PauseIcon, PrevIcon, NextIcon } from "./MediaIcons";
+import type { LoopMode } from "../types";
 
 const BREAK_MESSAGES = [
   { icon: "👁️", text: "让眼睛休息一下，看看远处的风景" },
@@ -23,6 +26,72 @@ function pick<T>(arr: T[], seed: number): T {
   return arr[seed % arr.length];
 }
 
+function BgMusicControls() {
+  const {
+    bgAudioPlans, bgCurrentPlanId, bgCurrentTrackIdx,
+    bgIsPlaying, bgLoopMode,
+    bgTogglePlay, bgNext, bgPrev, bgSetLoop, bgSetPlan,
+  } = useAppContext();
+
+  if (bgAudioPlans.length === 0) return null;
+
+  const currentPlan = bgAudioPlans.find((p) => p.id === bgCurrentPlanId) ?? null;
+  const currentTrack = currentPlan?.tracks[bgCurrentTrackIdx] ?? null;
+
+  // Background-music controls always use the audio purple theme for consistency
+  // with the mini/fullscreen players, regardless of the overlay's warm/cool tone.
+  const accent = "#a78bfa";
+
+  const cycleLoop = () => {
+    const modes: LoopMode[] = ["all", "track", "shuffle"];
+    bgSetLoop(modes[(modes.indexOf(bgLoopMode) + 1) % modes.length]);
+  };
+
+  const handlePlayClick = () => {
+    if (!currentTrack && bgAudioPlans.length > 0) {
+      bgSetPlan(bgAudioPlans[0].id);
+    } else {
+      bgTogglePlay();
+    }
+  };
+
+  return (
+    <div className="mt-8 px-6 py-4 rounded-2xl w-full max-w-xs mx-auto" style={{ background: "rgba(0,0,0,0.3)" }}>
+      <p className="text-xs text-center mb-1" style={{ color: accent, opacity: 0.7 }}>🎶 背景音乐</p>
+      {currentTrack && (
+        <p className="text-sm text-center truncate mb-3" style={{ color: accent }}>{currentTrack.title}</p>
+      )}
+      <div className="flex items-center justify-center gap-5">
+        <button
+          onClick={bgPrev}
+          disabled={!currentTrack}
+          className="disabled:opacity-30 transition-opacity"
+          style={{ color: accent }}
+        ><PrevIcon size={22} /></button>
+
+        <button
+          onClick={handlePlayClick}
+          className="w-12 h-12 rounded-full flex items-center justify-center transition-all"
+          style={{ background: accent, color: "#fff" }}
+        >
+          {bgIsPlaying ? <PauseIcon size={22} /> : <PlayIcon size={22} />}
+        </button>
+
+        <button
+          onClick={bgNext}
+          disabled={!currentTrack}
+          className="disabled:opacity-30 transition-opacity"
+          style={{ color: accent }}
+        ><NextIcon size={22} /></button>
+
+        <button onClick={cycleLoop} className="flex items-center justify-center" style={{ color: accent }}>
+          <LoopIcon mode={bgLoopMode} size={24} activeColor={accent} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function BreakOverlay() {
   const { isBreakRequired, breakRemainingSeconds, isBedtime, dismissBreak, blockedRanges } =
     useAppContext();
@@ -30,7 +99,6 @@ export function BreakOverlay() {
 
   useEffect(() => {
     if (!isBreakRequired && !isBedtime) return;
-    // Rotate message every 8 seconds
     const id = setInterval(() => setMsgIndex((i) => i + 1), 8000);
     return () => clearInterval(id);
   }, [isBreakRequired, isBedtime]);
@@ -39,7 +107,6 @@ export function BreakOverlay() {
 
   const canDismiss = isBreakRequired && breakRemainingSeconds <= 0;
 
-  // Find which blocked range is active (for bedtime end time)
   const now = new Date();
   const cur = now.getHours() * 60 + now.getMinutes();
   const activeRange = blockedRanges.find((r) => {
@@ -57,7 +124,7 @@ export function BreakOverlay() {
         className="fixed inset-0 z-50 flex flex-col items-center justify-center"
         style={{ background: "#05051a" }}
       >
-        <div className="text-center max-w-md px-6">
+        <div className="text-center max-w-md px-6 w-full">
           <div className="text-7xl mb-6">{msg.icon}</div>
           <h2 className="text-2xl font-bold mb-3" style={{ color: "#a0a8ff" }}>
             现在是休息时间
@@ -66,17 +133,18 @@ export function BreakOverlay() {
             {msg.text}
           </p>
           {activeRange && (
-            <p className="text-sm" style={{ color: "#555a8a" }}>
+            <p className="text-sm mb-4" style={{ color: "#555a8a" }}>
               {activeRange.start} — {activeRange.end} 不可观看
             </p>
           )}
-          <div className="mt-8 flex flex-wrap justify-center gap-3 text-sm" style={{ color: "#555a8a" }}>
+          <div className="flex flex-wrap justify-center gap-3 text-sm mb-2" style={{ color: "#555a8a" }}>
             {["喝水", "伸展", "冥想", "准备睡觉"].map((s) => (
               <span key={s} className="px-3 py-1 rounded-full border" style={{ borderColor: "#2a2a5a" }}>
                 {s}
               </span>
             ))}
           </div>
+          <BgMusicControls />
         </div>
       </div>
     );
@@ -84,15 +152,13 @@ export function BreakOverlay() {
 
   // Break screen
   const msg = pick(BREAK_MESSAGES, msgIndex);
-  const pct = Math.max(0, (breakRemainingSeconds / (breakRemainingSeconds + 1)) * 100);
-  void pct; // used for future progress ring
 
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center"
       style={{ background: "#1a0e00" }}
     >
-      <div className="text-center max-w-md px-6">
+      <div className="text-center max-w-md px-6 w-full">
         <div className="text-7xl mb-6">{msg.icon}</div>
         <h2 className="text-2xl font-bold mb-3" style={{ color: "#ffd580" }}>
           休息一下
@@ -102,11 +168,8 @@ export function BreakOverlay() {
         </p>
 
         {breakRemainingSeconds > 0 ? (
-          <div className="mb-6">
-            <div
-              className="text-4xl font-mono font-bold mb-2"
-              style={{ color: "#ff9500" }}
-            >
+          <div className="mb-4">
+            <div className="text-4xl font-mono font-bold mb-2" style={{ color: "#ff9500" }}>
               {Math.floor(breakRemainingSeconds / 60)}:
               {String(breakRemainingSeconds % 60).padStart(2, "0")}
             </div>
@@ -115,7 +178,7 @@ export function BreakOverlay() {
             </p>
           </div>
         ) : (
-          <div className="mb-6">
+          <div className="mb-4">
             <p className="text-sm" style={{ color: "#8a7a3a" }}>
               休息结束，可以继续了
             </p>
@@ -135,13 +198,15 @@ export function BreakOverlay() {
           {canDismiss ? "继续学习" : `休息中… ${breakRemainingSeconds}s`}
         </button>
 
-        <div className="mt-8 flex flex-wrap justify-center gap-3 text-sm" style={{ color: "#5a3a00" }}>
+        <div className="flex flex-wrap justify-center gap-3 text-sm mt-4 mb-2" style={{ color: "#5a3a00" }}>
           {["喝水", "走动", "伸展", "闭眼"].map((s) => (
             <span key={s} className="px-3 py-1 rounded-full border" style={{ borderColor: "#3a2a00" }}>
               {s}
             </span>
           ))}
         </div>
+
+        <BgMusicControls />
       </div>
     </div>
   );

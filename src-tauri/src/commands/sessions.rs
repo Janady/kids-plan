@@ -39,11 +39,15 @@ pub async fn record_watch_session(
     Ok(())
 }
 
+// Only counts video sessions (used for daily video limit check)
 #[tauri::command]
 pub async fn get_today_watched_seconds(state: State<'_, AppState>) -> Result<i64, String> {
     let date_key = today_key();
     let (total,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(seconds_watched), 0) FROM watch_sessions WHERE date_key = ?",
+        "SELECT COALESCE(SUM(ws.seconds_watched), 0)
+         FROM watch_sessions ws
+         JOIN videos v ON v.id = ws.video_id
+         WHERE ws.date_key = ? AND v.media_type = 'video'",
     )
     .bind(&date_key)
     .fetch_one(&state.db)
@@ -52,12 +56,33 @@ pub async fn get_today_watched_seconds(state: State<'_, AppState>) -> Result<i64
     Ok(total)
 }
 
+// Only counts audio plan sessions (shown separately, not counted toward video limit)
+#[tauri::command]
+pub async fn get_today_audio_seconds(state: State<'_, AppState>) -> Result<i64, String> {
+    let date_key = today_key();
+    let (total,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(ws.seconds_watched), 0)
+         FROM watch_sessions ws
+         JOIN videos v ON v.id = ws.video_id
+         WHERE ws.date_key = ? AND v.media_type = 'audio'",
+    )
+    .bind(&date_key)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(total)
+}
+
+// Daily limit only checks video watch time (eye protection, not audio)
 #[tauri::command]
 pub async fn check_daily_limit(state: State<'_, AppState>) -> Result<bool, String> {
     let today_total: i64 = {
         let date_key = today_key();
         let (t,): (i64,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(seconds_watched), 0) FROM watch_sessions WHERE date_key = ?",
+            "SELECT COALESCE(SUM(ws.seconds_watched), 0)
+             FROM watch_sessions ws
+             JOIN videos v ON v.id = ws.video_id
+             WHERE ws.date_key = ? AND v.media_type = 'video'",
         )
         .bind(&date_key)
         .fetch_one(&state.db)
@@ -77,4 +102,20 @@ pub async fn check_daily_limit(state: State<'_, AppState>) -> Result<bool, Strin
         .unwrap_or(3600);
 
     Ok(today_total >= limit)
+}
+
+// Record a background audio play (for frequency ranking; does not count toward any time limit)
+#[tauri::command]
+pub async fn record_background_play(
+    state: State<'_, AppState>,
+    video_id: i64,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO background_plays (video_id, played_at) VALUES (?, datetime('now'))",
+    )
+    .bind(video_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }

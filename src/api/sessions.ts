@@ -7,5 +7,11 @@ export const recordWatchSession = (session: WatchSessionInput): Promise<void> =>
 export const getTodayWatchedSeconds = (): Promise<number> =>
   invoke("get_today_watched_seconds");
 
+export const getTodayAudioSeconds = (): Promise<number> =>
+  invoke("get_today_audio_seconds");
+
 export const checkDailyLimit = (): Promise<boolean> =>
   invoke("check_daily_limit");
+
+export const recordBackgroundPlay = (videoId: number): Promise<void> =>
+  invoke("record_background_play", { videoId });

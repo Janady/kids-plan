@@ -144,14 +144,22 @@ function buildBars(dataMap: Map<string, number>, mode: ViewMode): ChartBar[] {
   });
 }
 
+function fmtBarLabel(s: number): string {
+  if (s <= 0) return "";
+  if (s < 3600) return `${Math.round(s / 60)}分`;
+  const h = s / 3600;
+  // Show one decimal only when it isn't a whole hour
+  return Number.isInteger(h) ? `${h}时` : `${h.toFixed(1)}时`;
+}
+
 function BarChart({ bars }: { bars: ChartBar[] }) {
   const maxSec = Math.max(...bars.map((b) => b.seconds), 1);
 
   return (
-    <div className="flex items-end gap-1 h-32 w-full">
+    // Fixed inner-bar height (112px) drives layout; pt-5 leaves room for labels
+    <div className="flex items-end gap-1 w-full pt-5">
       {bars.map((bar, i) => {
         const h = Math.round((bar.seconds / maxSec) * 112);
-        const hrs = (bar.seconds / 3600).toFixed(1);
         return (
           <div key={i} className="flex-1 flex flex-col items-center gap-1 group">
             <div className="relative w-full flex items-end justify-center" style={{ height: 112 }}>
@@ -161,8 +169,8 @@ function BarChart({ bars }: { bars: ChartBar[] }) {
                 title={`${bar.label}: ${fmtDuration(bar.seconds)}`}
               />
               {bar.seconds > 0 && (
-                <div className="absolute -top-5 text-[9px] text-sky-400 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                  {hrs}h
+                <div className="absolute -top-4 text-[9px] font-medium text-sky-300 whitespace-nowrap">
+                  {fmtBarLabel(bar.seconds)}
                 </div>
               )}
             </div>

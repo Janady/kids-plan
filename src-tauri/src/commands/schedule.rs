@@ -25,6 +25,7 @@ struct PendingVideo {
     progress_seconds: i64,
     duration_seconds: Option<i64>,
     sort_order: i64,
+    media_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +37,7 @@ pub struct TodayPendingItem {
     pub video_progress: i64,
     pub video_duration: Option<i64>,
     pub sort_order: i64,
+    pub media_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,9 +60,11 @@ pub struct TodayPlanItem {
 pub async fn get_today_schedule(
     state: State<'_, AppState>,
 ) -> Result<Vec<TodayPlanItem>, String> {
+    // Exclude background audio plans from the mandatory schedule
     let active_plans: Vec<ActivePlan> = sqlx::query_as(
         "SELECT id, name, episodes_per_day FROM plans
-         WHERE daily_schedule_active = 1 ORDER BY created_at ASC",
+         WHERE daily_schedule_active = 1
+         ORDER BY created_at ASC",
     )
     .fetch_all(&state.db)
     .await
@@ -69,7 +73,6 @@ pub async fn get_today_schedule(
     let mut result: Vec<TodayPlanItem> = Vec::new();
 
     for plan in &active_plans {
-        // Videos completed today — compare local-date portion of the RFC3339 timestamp
         let done_videos: Vec<DoneVideo> = sqlx::query_as(
             "SELECT id, title, sort_order FROM videos
              WHERE plan_id = ? AND status = 'watched'
@@ -91,13 +94,12 @@ pub async fn get_today_schedule(
             })
             .collect();
 
-        // Remaining episodes to show for today
         let remaining = (plan.episodes_per_day - done_count).max(0);
         let mut pending: Vec<TodayPendingItem> = Vec::new();
 
         if remaining > 0 {
             let pending_videos: Vec<PendingVideo> = sqlx::query_as(
-                "SELECT id, title, file_path, status, progress_seconds, duration_seconds, sort_order
+                "SELECT id, title, file_path, status, progress_seconds, duration_seconds, sort_order, media_type
                  FROM videos WHERE plan_id = ? AND status IN ('watching', 'not_watched')
                  ORDER BY CASE status WHEN 'watching' THEN 0 ELSE 1 END, sort_order ASC
                  LIMIT ?",
@@ -118,6 +120,7 @@ pub async fn get_today_schedule(
                     video_progress: v.progress_seconds,
                     video_duration: v.duration_seconds,
                     sort_order: v.sort_order,
+                    media_type: v.media_type,
                 })
                 .collect();
         }

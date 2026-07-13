@@ -1,9 +1,10 @@
 import { createContext, useContext } from "react";
-import type { BlockedTimeRange } from "../types";
+import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode } from "../types";
 
 export interface AppContextValue {
   dailyLimitSeconds: number;
   todayWatchedSeconds: number;
+  todayAudioSeconds: number;
   isLimitExceeded: boolean;
   setDailyLimit: (seconds: number) => Promise<void>;
   refreshTodayTotal: () => Promise<void>;
@@ -20,6 +21,24 @@ export interface AppContextValue {
   // Parent/Child mode
   isParentMode: boolean;
   toggleParentMode: (password?: string) => Promise<{ success: boolean; error?: string }>;
+  // Background audio player
+  bgAudioPlans: BackgroundAudioPlan[];
+  bgCurrentPlanId: number | null;
+  bgCurrentTrackIdx: number;
+  bgScopePlanId: number | null; // null = all plans; otherwise locked to one plan
+  bgIsPlaying: boolean;
+  bgLoopMode: LoopMode;
+  bgFullscreen: boolean;
+  bgRefreshPlans: () => Promise<void>;
+  bgSetPlan: (planId: number) => void;
+  bgSetTrack: (planId: number, idx: number) => void;
+  bgSetScope: (planId: number | null) => void;
+  bgTogglePlay: () => void;
+  bgNext: () => void;
+  bgPrev: () => void;
+  bgSetLoop: (mode: LoopMode) => void;
+  bgOnEnded: () => void;
+  bgSetFullscreen: (v: boolean) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

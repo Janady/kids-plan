@@ -28,6 +28,10 @@ class MainActivity : TauriActivity() {
           != PackageManager.PERMISSION_GRANTED) {
         permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
       }
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO)
+          != PackageManager.PERMISSION_GRANTED) {
+        permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+      }
     } else {
       if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
           != PackageManager.PERMISSION_GRANTED) {
