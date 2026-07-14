@@ -1,7 +1,7 @@
 {
   "name": "video-plan",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "build:win": "bun tauri build",
-    "build:portable": "bun scripts/build-portable.mjs"
+    "build:portable": "bun scripts/build-portable.mjs",
+    "bump": "bun scripts/bump-version.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

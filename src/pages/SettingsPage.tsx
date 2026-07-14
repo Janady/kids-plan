@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { getSetting, setSetting } from "../api/settings";
+import { APP_VERSION } from "../version";
 import type { BlockedTimeRange } from "../types";
 
 function fmtSec(s: number): string {
@@ -163,6 +164,11 @@ export default function SettingsPage() {
           {newPwd === "" ? "清除密码" : "设置密码"}
         </button>
       </section>
+
+      {/* Version info — for debugging which build is installed */}
+      <div className="text-center text-xs text-gray-600 pt-2">
+        版本 v{APP_VERSION}
+      </div>
     </div>
   );
 }

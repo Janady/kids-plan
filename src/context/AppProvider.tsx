@@ -157,14 +157,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const notifyVideoPlay = useCallback(() => {
     if (pauseResetTimerRef.current) { clearTimeout(pauseResetTimerRef.current); pauseResetTimerRef.current = null; }
     if (continuousStartRef.current === null) {
-      // Resume a persisted continuous-watch window if still valid
+      // Resume a persisted continuous-watch window only if it's still fresh.
+      // A stale value can linger in localStorage when the app is killed/backgrounded
+      // before the pause-reset timer fires; resuming it the next day would compute a
+      // huge "elapsed" and wrongly force a break on open. Treat anything older than
+      // the max continuous window as expired and start fresh.
       const stored = localStorage.getItem("continuousStart");
       const ts = stored ? parseInt(stored, 10) : NaN;
-      const start = !isNaN(ts) ? ts : Date.now();
+      const fresh = !isNaN(ts) && Date.now() - ts < maxContinuousSeconds * 1000;
+      const start = fresh ? ts : Date.now();
       continuousStartRef.current = start;
       localStorage.setItem("continuousStart", String(start));
     }
-  }, []);
+  }, [maxContinuousSeconds]);
 
   const notifyVideoPause = useCallback(() => {
     pauseResetTimerRef.current = setTimeout(() => {

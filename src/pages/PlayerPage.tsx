@@ -5,6 +5,8 @@ import { listVideosForPlan } from "../api/videos";
 import { updateVideoStatus, updateVideoProgress, setVideoDuration } from "../api/videos";
 import { useWatchSession } from "../hooks/useWatchSession";
 import { useAppContext } from "../context/AppContext";
+import { usePlatform } from "../hooks/usePlatform";
+import { FullscreenIcon, ExitFullscreenIcon } from "../components/MediaIcons";
 import { listPlans } from "../api/plans";
 import type { Video, Plan } from "../types";
 
@@ -28,9 +30,11 @@ export default function PlayerPage() {
   const [_duration, setDuration] = useState(0);
   const [resumedFrom, setResumedFrom] = useState<number | null>(null);
   const [ended, setEnded] = useState(false);
+  const [canFinishEarly, setCanFinishEarly] = useState(false);
 
   const { isLimitExceeded, refreshTodayTotal, notifyVideoPlay, notifyVideoPause, isParentMode,
     isBreakRequired, isBedtime } = useAppContext();
+  const { isAndroid } = usePlatform();
 
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -41,35 +45,47 @@ export default function PlayerPage() {
 
   const isAudio = video?.media_type === "audio";
 
-  // When a forced break / bedtime / daily limit kicks in, a fullscreen <video>
-  // would render above the overlay in the browser's fullscreen layer.
-  // Exit fullscreen and pause so the reminder is actually visible.
+  // Custom (CSS-based) fullscreen: native WebView fullscreen is unreliable on
+  // Android, so we roll our own — a fixed overlay + CSS rotation to force
+  // landscape without depending on physical device rotation.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPortrait, setIsPortrait] = useState(
+    typeof window !== "undefined" ? window.innerWidth < window.innerHeight : false
+  );
+
   useEffect(() => {
-    if (isAudio) return;
+    const onResize = () => setIsPortrait(window.innerWidth < window.innerHeight);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+
+  // Esc / Android back exits custom fullscreen
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); setIsFullscreen(false); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isFullscreen]);
+
+  // Break / bedtime / daily-limit must be visible over the video: leave fullscreen.
+  useEffect(() => {
     if (isBreakRequired || isBedtime || isLimitExceeded) {
       const el = mediaRef.current;
       if (el && !el.paused) el.pause();
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
-      }
+      setIsFullscreen(false);
     }
-  }, [isBreakRequired, isBedtime, isLimitExceeded, isAudio]);
-
-  // Lock to landscape while a video is on screen (mobile); restore on leave.
-  useEffect(() => {
-    if (isAudio) return;
-    const orientation = screen.orientation as ScreenOrientation & {
-      lock?: (o: string) => Promise<void>;
-    };
-    orientation?.lock?.("landscape").catch(() => {});
-    return () => {
-      screen.orientation?.unlock?.();
-    };
-  }, [isAudio]);
+  }, [isBreakRequired, isBedtime, isLimitExceeded]);
 
   useEffect(() => {
     setLoading(true);
     setEnded(false);
+    setCanFinishEarly(false);
     durationSetRef.current = false;
     resumeShownRef.current = false;
     setResumedFrom(null);
@@ -124,7 +140,9 @@ export default function PlayerPage() {
     }
   }, [pauseSession, notifyVideoPause, vId, isParentMode, isAudio]);
 
-  const handleEnded = useCallback(async () => {
+  // Mark the current item complete, record the session, and head home.
+  // Shared by natural end-of-playback and the manual "finish early" button.
+  const finishVideo = useCallback(async () => {
     if (!isAudio) notifyVideoPause();
     if (!isParentMode) {
       await endSession();
@@ -137,6 +155,15 @@ export default function PlayerPage() {
       navigate("/");
     }
   }, [endSession, notifyVideoPause, vId, refreshTodayTotal, navigate, isParentMode, isAudio]);
+
+  const handleEnded = useCallback(() => { finishVideo(); }, [finishVideo]);
+
+  // Show a "finish early" button once playback passes 80% (skip end credits)
+  const handleTimeUpdate = useCallback(() => {
+    const el = mediaRef.current;
+    if (!el || !el.duration || !isFinite(el.duration)) return;
+    if (el.currentTime / el.duration >= 0.8) setCanFinishEarly(true);
+  }, []);
 
   // Save progress every 5 seconds (child mode only)
   useEffect(() => {
@@ -234,6 +261,7 @@ export default function PlayerPage() {
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handlePlay}
               onPause={handlePause}
+              onTimeUpdate={handleTimeUpdate}
               onEnded={handleEnded}
             />
           </div>
@@ -246,20 +274,79 @@ export default function PlayerPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : null}
+
+      {/* Audio: finish-early control row below the player */}
+      {isAudio && canFinishEarly && !ended && !isParentMode && (
+        <div className="mt-3">
+          <button
+            onClick={finishVideo}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+            title="已听完主要内容，直接标记完成"
+          >
+            ✓ 完成本集
+          </button>
+        </div>
+      )}
+
+      {!isAudio && (
         /* ── Video player ── */
-        <div className="relative bg-black rounded-xl overflow-hidden aspect-video w-full">
-          <video
-            ref={mediaRef as React.RefObject<HTMLVideoElement>}
-            src={src}
-            controls
-            autoPlay
-            className="w-full h-full"
-            onLoadedMetadata={handleLoadedMetadata}
-            onPlay={handlePlay}
-            onPause={handlePause}
-            onEnded={handleEnded}
-          />
+        <div
+          className={
+            isFullscreen
+              ? "fixed inset-0 z-[80] bg-black flex items-center justify-center"
+              : "relative bg-black rounded-xl overflow-hidden aspect-video w-full"
+          }
+        >
+          <div
+            className={
+              isFullscreen && isAndroid && isPortrait
+                ? "absolute bg-black"
+                : "relative w-full h-full flex items-center justify-center"
+            }
+            // In portrait fullscreen on mobile, rotate the video 90° and swap
+            // width/height so it fills the screen in landscape — no device rotation needed.
+            style={
+              isFullscreen && isAndroid && isPortrait
+                ? {
+                    width: "100vh",
+                    height: "100vw",
+                    transform: "rotate(90deg)",
+                    transformOrigin: "center",
+                    left: "calc(50vw - 50vh)",
+                    top: "calc(50vh - 50vw)",
+                  }
+                : undefined
+            }
+          >
+            <video
+              ref={mediaRef as React.RefObject<HTMLVideoElement>}
+              src={src}
+              controls
+              controlsList="nodownload"
+              autoPlay
+              className="w-full h-full"
+              onLoadedMetadata={handleLoadedMetadata}
+              onPlay={handlePlay}
+              onPause={handlePause}
+              onTimeUpdate={handleTimeUpdate}
+              onEnded={handleEnded}
+            />
+          </div>
+
+          {/* Custom fullscreen toggle. Kept inside the player only while in
+              fullscreen (so it's reachable over the video); in normal view the
+              toggle lives in the button row below, where taps are reliable on
+              Android WebView (the native video surface can eat overlay taps). */}
+          {isFullscreen && (
+            <button
+              onClick={() => setIsFullscreen(false)}
+              className="absolute top-2 right-2 z-10 w-9 h-9 rounded-lg bg-black/50 hover:bg-black/70 flex items-center justify-center text-white transition-colors"
+              title="退出全屏"
+            >
+              <ExitFullscreenIcon size={18} />
+            </button>
+          )}
 
           {resumedFrom !== null && (
             <div className="absolute bottom-14 left-1/2 -translate-x-1/2 bg-black/70 text-yellow-300 text-sm px-4 py-2 rounded-full pointer-events-none">
@@ -273,6 +360,28 @@ export default function PlayerPage() {
               <div className="text-xl font-semibold text-green-400 mb-1">本集已完成</div>
               <div className="text-sm text-gray-400">正在返回首页…</div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Control row below the video — reliable taps on all platforms */}
+      {!isAudio && !isFullscreen && (
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            onClick={() => setIsFullscreen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm transition-colors"
+          >
+            <FullscreenIcon size={16} /> 全屏
+          </button>
+
+          {canFinishEarly && !ended && !isParentMode && (
+            <button
+              onClick={finishVideo}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+              title="已看完主要内容，直接标记完成"
+            >
+              ✓ 完成本集
+            </button>
           )}
         </div>
       )}
