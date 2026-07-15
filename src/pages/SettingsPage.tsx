@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAppContext } from "../context/AppContext";
 import { getSetting, setSetting } from "../api/settings";
+import { usePlatform } from "../hooks/usePlatform";
+import { FolderPickerModal } from "../components/FolderPickerModal";
 import { APP_VERSION } from "../version";
 import type { BlockedTimeRange } from "../types";
 
@@ -50,6 +53,16 @@ export default function SettingsPage() {
   const [newPwd, setNewPwd] = useState("");
   const [pwdMsg, setPwdMsg] = useState("");
 
+  // Scan root directory — new plans start from here
+  const { isAndroid } = usePlatform();
+  const [scanRoot, setScanRoot] = useState("");
+  const [showRootPicker, setShowRootPicker] = useState(false);
+  const [savedRoot, setSavedRoot] = useState(false);
+
+  useEffect(() => {
+    getSetting("scan_root_dir").then((v) => { if (v) setScanRoot(v); });
+  }, []);
+
   if (!isParentMode) {
     return (
       <div className="flex flex-col items-center justify-center py-32 text-center">
@@ -77,6 +90,24 @@ export default function SettingsPage() {
     setTimeout(() => setSavedBreak(false), 2000);
   };
 
+  const saveRoot = async (path: string) => {
+    setScanRoot(path);
+    await setSetting("scan_root_dir", path);
+    setSavedRoot(true);
+    setTimeout(() => setSavedRoot(false), 2000);
+  };
+
+  const handlePickRoot = async () => {
+    if (isAndroid) { setShowRootPicker(true); return; }
+    const selected = await open({ directory: true, multiple: false, defaultPath: scanRoot || undefined });
+    if (selected) await saveRoot(String(selected));
+  };
+
+  const handleClearRoot = async () => {
+    setScanRoot("");
+    await setSetting("scan_root_dir", "");
+  };
+
   const handleSavePassword = async () => {
     const stored = await getSetting("parent_password") ?? "";
     if (stored !== "" && stored !== oldPwd) {
@@ -91,7 +122,39 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-lg space-y-6">
+      {showRootPicker && (
+        <FolderPickerModal
+          initialPath={scanRoot || undefined}
+          onSelect={(path) => { setShowRootPicker(false); saveRoot(path); }}
+          onCancel={() => setShowRootPicker(false)}
+        />
+      )}
+
       <h1 className="text-2xl font-bold text-gray-100">设置</h1>
+
+      {/* Scan root directory */}
+      <section className="bg-gray-800 border border-gray-700 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-1">视频根目录</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          设置后，新增计划时会从这个目录开始选择，不必每次从头找。
+        </p>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex-1 min-w-0 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-300 truncate">
+            {scanRoot || <span className="text-gray-600">未设置（默认从根目录选起）</span>}
+          </div>
+          {scanRoot && (
+            <button onClick={handleClearRoot} className="shrink-0 px-3 py-2 text-xs text-gray-400 hover:text-gray-200 transition-colors">
+              清除
+            </button>
+          )}
+        </div>
+        <button
+          onClick={handlePickRoot}
+          className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${savedRoot ? "bg-green-700 text-green-200" : "bg-sky-600 hover:bg-sky-500 text-white"}`}
+        >
+          {savedRoot ? "已保存 ✓" : "选择目录"}
+        </button>
+      </section>
 
       {/* Daily limit */}
       <section className="bg-gray-800 border border-gray-700 rounded-xl p-5">

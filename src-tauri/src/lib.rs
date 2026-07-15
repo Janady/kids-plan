@@ -113,6 +113,8 @@ pub fn run() {
             list_videos_for_plan,
             update_video_status,
             mark_video_watched_earlier,
+            list_completed_for_cleanup,
+            cleanup_videos,
             update_video_progress,
             set_video_duration,
             record_watch_session,

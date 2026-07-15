@@ -7,6 +7,8 @@ struct ActivePlan {
     id: i64,
     name: String,
     episodes_per_day: i64,
+    #[allow(dead_code)]
+    priority: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -61,10 +63,12 @@ pub async fn get_today_schedule(
     state: State<'_, AppState>,
 ) -> Result<Vec<TodayPlanItem>, String> {
     // Exclude background audio plans from the mandatory schedule
+    // Higher priority first, then creation order — so mandatory high-priority
+    // plans surface at the top of today's tasks.
     let active_plans: Vec<ActivePlan> = sqlx::query_as(
-        "SELECT id, name, episodes_per_day FROM plans
+        "SELECT id, name, episodes_per_day, priority FROM plans
          WHERE daily_schedule_active = 1
-         ORDER BY created_at ASC",
+         ORDER BY priority DESC, created_at ASC",
     )
     .fetch_all(&state.db)
     .await

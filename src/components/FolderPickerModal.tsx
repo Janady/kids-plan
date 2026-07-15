@@ -9,12 +9,13 @@ interface DirEntry {
 interface Props {
   onSelect: (path: string) => void;
   onCancel: () => void;
+  initialPath?: string;
 }
 
 const ROOT = "/storage/emulated/0";
 
-export function FolderPickerModal({ onSelect, onCancel }: Props) {
-  const [currentPath, setCurrentPath] = useState(ROOT);
+export function FolderPickerModal({ onSelect, onCancel, initialPath }: Props) {
+  const [currentPath, setCurrentPath] = useState(initialPath || ROOT);
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export function FolderPickerModal({ onSelect, onCancel }: Props) {
     setCurrentPath(parent);
   };
 
-  const canGoUp = currentPath !== "/" && currentPath !== ROOT;
+  const canGoUp = currentPath !== "/" && currentPath !== "";
 
   // Abbreviated path display: show last 2 segments
   const pathLabel = currentPath

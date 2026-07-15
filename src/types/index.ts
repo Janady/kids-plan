@@ -42,6 +42,28 @@ export interface Video {
   sort_order: number;
   media_type: MediaType;
   updated_at: string;
+  file_exists: boolean; // false = file cleaned up / missing on disk
+}
+
+export interface CleanupVideo {
+  id: number;
+  title: string;
+  file_path: string;
+  file_size: number;
+}
+
+export interface CleanupPlan {
+  plan_id: number;
+  plan_name: string;
+  videos: CleanupVideo[];
+  total_size: number;
+}
+
+export interface CleanupResult {
+  deleted: number;
+  freed_bytes: number;
+  not_found: number;
+  failed: string[];
 }
 
 export interface WatchSessionInput {
@@ -106,4 +128,12 @@ export interface BackgroundAudioPlan {
   id: number;
   name: string;
   tracks: BackgroundTrack[];
+}
+
+export interface ScanReport {
+  found: number;          // media files discovered on disk
+  added: number;          // now owned by this plan
+  skipped: number;        // skipped — already owned by another plan
+  skipped_names: string[]; // titles of skipped files (capped at 20)
+  plan: Plan;
 }

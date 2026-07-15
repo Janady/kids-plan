@@ -12,6 +12,7 @@ import PlayerPage from "./pages/PlayerPage";
 import SettingsPage from "./pages/SettingsPage";
 import StatsPage from "./pages/StatsPage";
 import BackgroundAudioPage from "./pages/BackgroundAudioPage";
+import CleanupPage from "./pages/CleanupPage";
 import { usePlatform } from "./hooks/usePlatform";
 import { useAppContext } from "./context/AppContext";
 
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/stats" element={<StatsPage />} />
           <Route path="/background-audio" element={<BackgroundAudioPage />} />
+          <Route path="/cleanup" element={<CleanupPage />} />
         </Routes>
       </main>
       <BreakOverlay />

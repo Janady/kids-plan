@@ -19,6 +19,16 @@ pub struct Video {
     pub sort_order: i64,
     pub media_type: String,
     pub updated_at: String,
+    // Not a DB column — filled after query by checking the disk.
+    // false means the file was cleaned up (or is otherwise missing).
+    #[sqlx(default)]
+    pub file_exists: bool,
+}
+
+// Check whether a video's file is present on disk (Android SAF paths normalized).
+fn file_present(file_path: &str) -> bool {
+    let real = crate::commands::plans::normalize_folder_path(file_path);
+    std::path::Path::new(&real).exists()
 }
 
 #[tauri::command]
@@ -26,7 +36,7 @@ pub async fn list_videos_for_plan(
     state: State<'_, AppState>,
     plan_id: i64,
 ) -> Result<Vec<Video>, String> {
-    let videos: Vec<Video> = sqlx::query_as(
+    let mut videos: Vec<Video> = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
                 progress_seconds, sort_order, media_type, updated_at
          FROM videos
@@ -44,6 +54,10 @@ pub async fn list_videos_for_plan(
     .fetch_all(&state.db)
     .await
     .map_err(|e| e.to_string())?;
+
+    for v in &mut videos {
+        v.file_exists = file_present(&v.file_path);
+    }
     Ok(videos)
 }
 
@@ -93,7 +107,7 @@ async fn recompute_plan_status(
 }
 
 async fn fetch_video(db: &sqlx::SqlitePool, video_id: i64) -> Result<Video, String> {
-    sqlx::query_as(
+    let mut v: Video = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
                 progress_seconds, sort_order, media_type, updated_at
          FROM videos WHERE id = ?",
@@ -101,7 +115,9 @@ async fn fetch_video(db: &sqlx::SqlitePool, video_id: i64) -> Result<Video, Stri
     .bind(video_id)
     .fetch_one(db)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    v.file_exists = file_present(&v.file_path);
+    Ok(v)
 }
 
 #[tauri::command]
@@ -200,4 +216,145 @@ pub async fn set_video_duration(
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ─── Completed-video cleanup (free disk space) ───────────────────────────────
+
+#[derive(Serialize)]
+pub struct CleanupVideo {
+    pub id: i64,
+    pub title: String,
+    pub file_path: String,
+    pub file_size: i64,
+}
+
+#[derive(Serialize)]
+pub struct CleanupPlan {
+    pub plan_id: i64,
+    pub plan_name: String,
+    pub videos: Vec<CleanupVideo>,
+    pub total_size: i64,
+}
+
+#[derive(Serialize)]
+pub struct CleanupResult {
+    pub deleted: i64,          // files actually removed from disk
+    pub freed_bytes: i64,
+    pub not_found: i64,        // record's path didn't resolve to an existing file
+    pub failed: Vec<String>,   // "<title>: <reason>" for files that couldn't be deleted
+}
+
+// List completed videos whose files still exist on disk, grouped by plan.
+// Audio and already-cleared (missing) files are excluded.
+#[tauri::command]
+pub async fn list_completed_for_cleanup(
+    state: State<'_, AppState>,
+) -> Result<Vec<CleanupPlan>, String> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        plan_id: i64,
+        plan_name: String,
+        title: String,
+        file_path: String,
+    }
+
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path
+         FROM videos v
+         JOIN plans p ON p.id = v.plan_id
+         WHERE v.status = 'watched' AND v.media_type = 'video'
+         ORDER BY p.updated_at DESC, v.sort_order ASC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut plans: Vec<CleanupPlan> = Vec::new();
+    for row in rows {
+        let real = crate::commands::plans::normalize_folder_path(&row.file_path);
+        let size = match std::fs::metadata(&real) {
+            Ok(m) => m.len() as i64,
+            Err(_) => continue, // file already gone (cleaned up) → skip
+        };
+
+        let entry = match plans.iter_mut().find(|p| p.plan_id == row.plan_id) {
+            Some(p) => p,
+            None => {
+                plans.push(CleanupPlan {
+                    plan_id: row.plan_id,
+                    plan_name: row.plan_name.clone(),
+                    videos: Vec::new(),
+                    total_size: 0,
+                });
+                plans.last_mut().unwrap()
+            }
+        };
+        entry.total_size += size;
+        entry.videos.push(CleanupVideo {
+            id: row.id,
+            title: row.title,
+            file_path: row.file_path,
+            file_size: size,
+        });
+    }
+
+    Ok(plans)
+}
+
+// Delete the disk files of the given completed videos. DB records are kept
+// (they stay "watched"); only the files are removed. Non-watched videos are
+// refused. A missing file counts as success (already freed).
+#[tauri::command]
+pub async fn cleanup_videos(
+    state: State<'_, AppState>,
+    video_ids: Vec<i64>,
+) -> Result<CleanupResult, String> {
+    let mut deleted = 0i64;
+    let mut freed_bytes = 0i64;
+    let mut not_found = 0i64;
+    let mut failed: Vec<String> = Vec::new();
+
+    for id in video_ids {
+        let row: Option<(String, String, String)> =
+            sqlx::query_as("SELECT file_path, status, title FROM videos WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| e.to_string())?;
+
+        let (file_path, status, title) = match row {
+            Some(r) => r,
+            None => continue,
+        };
+        // Only completed videos may be cleaned up
+        if status != "watched" {
+            failed.push(format!("{title}: 未完成，跳过"));
+            continue;
+        }
+
+        let real = crate::commands::plans::normalize_folder_path(&file_path);
+        let path = std::path::Path::new(&real);
+
+        // Report — but do NOT silently count a missing file as deleted, so the
+        // UI reflects reality (this masked failures on Android before).
+        if !path.exists() {
+            not_found += 1;
+            failed.push(format!("{title}: 未找到文件 {real}"));
+            continue;
+        }
+
+        let size = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
+        match std::fs::remove_file(path) {
+            Ok(_) => {
+                deleted += 1;
+                freed_bytes += size;
+            }
+            Err(e) => {
+                failed.push(format!("{title}: {} ({real})", e.kind()));
+            }
+        }
+    }
+
+    Ok(CleanupResult { deleted, freed_bytes, not_found, failed })
 }

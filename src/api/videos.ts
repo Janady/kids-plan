@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Video } from "../types";
+import type { Video, CleanupPlan, CleanupResult } from "../types";
 
 export const listVideosForPlan = (planId: number): Promise<Video[]> =>
   invoke("list_videos_for_plan", { planId });
@@ -22,3 +22,9 @@ export const setVideoDuration = (
   videoId: number,
   durationSeconds: number
 ): Promise<void> => invoke("set_video_duration", { videoId, durationSeconds });
+
+export const listCompletedForCleanup = (): Promise<CleanupPlan[]> =>
+  invoke("list_completed_for_cleanup");
+
+export const cleanupVideos = (videoIds: number[]): Promise<CleanupResult> =>
+  invoke("cleanup_videos", { videoIds });

@@ -114,6 +114,7 @@ export function NavBar() {
         </Link>
 
         {navLink("/stats", "统计")}
+        {isParentMode && navLink("/cleanup", "清理")}
         {isParentMode && navLink("/settings", "设置")}
 
         <div className="ml-auto flex items-center gap-3">

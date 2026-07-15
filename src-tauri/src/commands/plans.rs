@@ -13,7 +13,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "aac", "ogg", "opus", "wav", "m4a", "wma", "aiff",
 ];
 
-fn normalize_folder_path(raw: &str) -> String {
+pub(crate) fn normalize_folder_path(raw: &str) -> String {
     const SAF_PREFIX: &str =
         "content://com.android.externalstorage.documents/tree/primary%3A";
     if let Some(rest) = raw.strip_prefix(SAF_PREFIX) {
@@ -89,6 +89,18 @@ pub struct PlanWithCounts {
     pub next_video_media_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+// Report returned after adding/rescanning a plan, so the UI can tell the user
+// exactly what the scan found: how many files on disk, how many were newly added,
+// and how many were skipped because another plan already owns them.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScanReport {
+    pub found: i64,        // media files discovered on disk
+    pub added: i64,        // newly inserted into this plan
+    pub skipped: i64,      // ignored — already owned by another plan
+    pub skipped_names: Vec<String>, // titles of skipped files (capped)
+    pub plan: PlanWithCounts,
 }
 
 #[derive(sqlx::FromRow)]
@@ -239,7 +251,7 @@ pub async fn add_plan(
     scan_video: Option<i64>,
     scan_audio: Option<i64>,
     audio_role: Option<String>,
-) -> Result<PlanWithCounts, String> {
+) -> Result<ScanReport, String> {
     let folder_path_str = normalize_folder_path(&folder_path);
 
     let folder = std::path::Path::new(&folder_path_str);
@@ -275,8 +287,10 @@ pub async fn add_plan(
     .await
     .map_err(|e| e.to_string())?;
 
+    let mut skipped_names: Vec<String> = Vec::new();
+    let mut added = 0i64;
     for (file_path, title, sort_order, media_type) in &media_files {
-        sqlx::query(
+        let res = sqlx::query(
             "INSERT OR IGNORE INTO videos
              (plan_id, file_path, title, status, progress_seconds, sort_order, media_type, created_at, updated_at)
              VALUES (?, ?, ?, 'not_watched', 0, ?, ?, ?, ?)",
@@ -291,7 +305,17 @@ pub async fn add_plan(
         .execute(&mut *tx_db)
         .await
         .map_err(|e| e.to_string())?;
+
+        if res.rows_affected() == 0 {
+            // UNIQUE(file_path) conflict → file already belongs to another plan
+            if skipped_names.len() < 20 {
+                skipped_names.push(title.clone());
+            }
+        } else {
+            added += 1;
+        }
     }
+    let skipped = media_files.len() as i64 - added;
 
     tx_db.commit().await.map_err(|e| e.to_string())?;
 
@@ -301,10 +325,19 @@ pub async fn add_plan(
         fetch_next_video(&state.db, plan_id, "not_started").await?
     };
 
-    let video_count = media_files.iter().filter(|(_, _, _, mt)| mt == "video").count() as i64;
-    let audio_count = media_files.iter().filter(|(_, _, _, mt)| mt == "audio").count() as i64;
+    // Counts reflect what actually landed in this plan (excludes skipped duplicates)
+    let (video_count, audio_count): (i64, i64) = sqlx::query_as(
+        "SELECT
+            COUNT(CASE WHEN media_type = 'video' THEN 1 END),
+            COUNT(CASE WHEN media_type = 'audio' THEN 1 END)
+         FROM videos WHERE plan_id = ?",
+    )
+    .bind(plan_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
 
-    Ok(PlanWithCounts {
+    let plan = PlanWithCounts {
         id: plan_id,
         name: plan_name,
         folder_path: folder_path_str,
@@ -329,6 +362,14 @@ pub async fn add_plan(
         next_video_media_type: next.as_ref().map(|n| n.media_type.clone()),
         created_at: now.clone(),
         updated_at: now,
+    };
+
+    Ok(ScanReport {
+        found: media_files.len() as i64,
+        added,
+        skipped,
+        skipped_names,
+        plan,
     })
 }
 
@@ -375,9 +416,7 @@ async fn plan_blocks_today(db: &sqlx::SqlitePool, plan: &PlanRow) -> Result<bool
 #[tauri::command]
 pub async fn list_plans(state: State<'_, AppState>) -> Result<Vec<PlanWithCounts>, String> {
     let sql = format!(
-        "{} GROUP BY p.id ORDER BY
-         CASE p.status WHEN 'in_progress' THEN 0 WHEN 'not_started' THEN 1 WHEN 'completed' THEN 2 ELSE 3 END,
-         p.daily_schedule_active DESC, p.created_at DESC",
+        "{} GROUP BY p.id ORDER BY p.updated_at DESC",
         PLAN_SELECT
     );
     let rows: Vec<PlanRow> = sqlx::query_as(&sql)
@@ -416,7 +455,7 @@ pub async fn delete_plan(state: State<'_, AppState>, plan_id: i64) -> Result<(),
 pub async fn rescan_plan(
     state: State<'_, AppState>,
     plan_id: i64,
-) -> Result<PlanWithCounts, String> {
+) -> Result<ScanReport, String> {
     let plan: Plan = sqlx::query_as("SELECT * FROM plans WHERE id = ?")
         .bind(plan_id)
         .fetch_one(&state.db)
@@ -432,15 +471,17 @@ pub async fn rescan_plan(
     let now = now_str();
     let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
 
-    let existing: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, file_path FROM videos WHERE plan_id = ?")
+    let existing: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT id, file_path, status FROM videos WHERE plan_id = ?")
             .bind(plan_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
-    for (vid_id, vid_path) in &existing {
-        if !disk_paths.contains(vid_path) {
+    for (vid_id, vid_path, status) in &existing {
+        // Keep watched records even if their file is gone — the file may have been
+        // intentionally cleaned up to save space; we preserve completion history.
+        if !disk_paths.contains(vid_path) && status != "watched" {
             sqlx::query("DELETE FROM videos WHERE id = ?")
                 .bind(vid_id)
                 .execute(&mut *tx)
@@ -450,25 +491,32 @@ pub async fn rescan_plan(
     }
 
     let existing_paths: std::collections::HashSet<String> =
-        existing.into_iter().map(|(_, p)| p).collect();
+        existing.into_iter().map(|(_, p, _)| p).collect();
 
+    let mut skipped_names: Vec<String> = Vec::new();
     for (file_path, title, sort_order, media_type) in &disk_files {
-        if !existing_paths.contains(file_path) {
-            sqlx::query(
-                "INSERT OR IGNORE INTO videos
-                 (plan_id, file_path, title, status, progress_seconds, sort_order, media_type, created_at, updated_at)
-                 VALUES (?, ?, ?, 'not_watched', 0, ?, ?, ?, ?)",
-            )
-            .bind(plan_id)
-            .bind(file_path)
-            .bind(title)
-            .bind(sort_order)
-            .bind(media_type)
-            .bind(&now)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        if existing_paths.contains(file_path) {
+            continue; // already in this plan
+        }
+        let res = sqlx::query(
+            "INSERT OR IGNORE INTO videos
+             (plan_id, file_path, title, status, progress_seconds, sort_order, media_type, created_at, updated_at)
+             VALUES (?, ?, ?, 'not_watched', 0, ?, ?, ?, ?)",
+        )
+        .bind(plan_id)
+        .bind(file_path)
+        .bind(title)
+        .bind(sort_order)
+        .bind(media_type)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if res.rows_affected() == 0 && skipped_names.len() < 20 {
+            // owned by another plan (UNIQUE file_path conflict)
+            skipped_names.push(title.clone());
         }
     }
 
@@ -483,8 +531,35 @@ pub async fn rescan_plan(
     .await
     .map_err(|e| e.to_string())?;
 
+    // How many of the disk files are actually owned by *this* plan now
+    let owned_here: i64 = {
+        let mut n = 0i64;
+        for (fp, _, _, _) in &disk_files {
+            let (c,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM videos WHERE plan_id = ? AND file_path = ?",
+            )
+            .bind(plan_id)
+            .bind(fp)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| e.to_string())?;
+            n += c;
+        }
+        n
+    };
+
+    let found = disk_files.len() as i64;
+    let skipped = found - owned_here;
+
     let next = fetch_next_video(&state.db, row.id, &row.status).await?;
-    Ok(build_plan_with_counts(row, next, false))
+    let plan = build_plan_with_counts(row, next, false);
+    Ok(ScanReport {
+        found,
+        added: owned_here,
+        skipped,
+        skipped_names,
+        plan,
+    })
 }
 
 #[tauri::command]
@@ -555,7 +630,7 @@ pub async fn update_plan_media_settings(
     .await
     .map_err(|e| e.to_string())?;
 
-    rescan_plan(state, plan_id).await
+    Ok(rescan_plan(state, plan_id).await?.plan)
 }
 
 // ─── Background audio ─────────────────────────────────────────────────────────

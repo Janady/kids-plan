@@ -79,15 +79,26 @@ function VideoFileNode({
 }) {
   const navigate = useNavigate();
   const video = node.video!;
-  const locked = !isParentMode;
+  const cleared = video.file_exists === false; // file removed to free space
+  const locked = !isParentMode || cleared;
   const pct = video.status === "watching" && video.duration_seconds
     ? Math.min(100, (video.progress_seconds / video.duration_seconds) * 100) : 0;
 
+  const handleClick = () => {
+    if (cleared) {
+      alert("此视频文件已清理，无法播放。如需重看请重新下载后重新扫描。");
+      return;
+    }
+    if (!locked) navigate(`/plan/${planId}/video/${video.id}`);
+  };
+
   return (
     <div
-      onClick={() => !locked && navigate(`/plan/${planId}/video/${video.id}`)}
+      onClick={handleClick}
       className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all ${
-        locked
+        cleared
+          ? "border-gray-800 bg-gray-900/30 cursor-not-allowed"
+          : locked
           ? "border-gray-800 opacity-40 cursor-not-allowed bg-gray-900/30"
           : video.status === "watching"
           ? "border-yellow-700/50 bg-gray-800 hover:border-yellow-500 cursor-pointer"
@@ -95,13 +106,14 @@ function VideoFileNode({
       }`}
     >
       <div className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[video.status] ?? "bg-gray-600"}`} />
-      {locked && <span className="text-xs shrink-0">🔒</span>}
+      {cleared ? <span className="text-xs shrink-0">🗑️</span> : locked && <span className="text-xs shrink-0">🔒</span>}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-gray-600 shrink-0">{episodeNum}</span>
-          <span className="text-sm text-gray-200 truncate">{video.title}</span>
+          <span className={`text-sm truncate ${cleared ? "text-gray-500 line-through" : "text-gray-200"}`}>{video.title}</span>
+          {cleared && <span className="text-[10px] text-gray-500 shrink-0 no-underline">已清理</span>}
         </div>
-        {video.status === "watching" && video.progress_seconds > 0 && (
+        {!cleared && video.status === "watching" && video.progress_seconds > 0 && (
           <div className="mt-1 ml-6">
             <div className="w-full h-0.5 bg-gray-700 rounded-full overflow-hidden">
               <div className="h-full bg-yellow-400" style={{ width: `${pct}%` }} />
@@ -113,7 +125,7 @@ function VideoFileNode({
           </div>
         )}
       </div>
-      {video.duration_seconds && (
+      {!cleared && video.duration_seconds && (
         <span className="text-[10px] text-gray-600 shrink-0">{formatTime(video.duration_seconds)}</span>
       )}
     </div>
@@ -358,6 +370,7 @@ export default function PlanPage() {
   const [activating, setActivating] = useState(false);
   const [priority, setPriority] = useState(0);
   const [activeTab, setActiveTab] = useState<"video" | "audio">("video");
+  const [scanNotice, setScanNotice] = useState<string | null>(null);
 
   const loadPlan = async () => {
     const all = await listPlans();
@@ -381,7 +394,21 @@ export default function PlanPage() {
 
   const handleRescan = async () => {
     setRescanning(true);
-    try { await rescanPlan(id); await refresh(); await loadPlan(); } finally { setRescanning(false); }
+    setScanNotice(null);
+    try {
+      const report = await rescanPlan(id);
+      const parts = [`发现 ${report.found} 个媒体文件`, `本计划 ${report.added} 个`];
+      if (report.skipped > 0) {
+        const names = report.skipped_names.slice(0, 5).join("、");
+        const more = report.skipped_names.length < report.skipped ? " 等" : "";
+        parts.push(`${report.skipped} 个已被其它计划收录（${names}${more}）`);
+      }
+      setScanNotice(parts.join("，"));
+      await refresh();
+      await loadPlan();
+    } finally {
+      setRescanning(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -437,6 +464,14 @@ export default function PlanPage() {
             {plan.is_background === 1 && <span className="text-purple-400">· 🎶 背景音乐</span>}
             {plan.watched_count > 0 && <span>· {plan.watched_count} 已完成</span>}
           </div>
+        </div>
+      )}
+
+      {scanNotice && (
+        <div className="mb-4 px-4 py-3 bg-sky-900/40 border border-sky-700/60 rounded-lg text-sm text-sky-200 flex items-start gap-2">
+          <span className="shrink-0">📋</span>
+          <span className="flex-1">{scanNotice}</span>
+          <button onClick={() => setScanNotice(null)} className="shrink-0 text-sky-400 hover:text-sky-200">✕</button>
         </div>
       )}
 
@@ -560,6 +595,10 @@ export default function PlanPage() {
       {!loading && !hasVideo && !hasAudio && (
         <div className="text-center text-gray-500 py-16">
           <p>此文件夹中没有找到媒体文件</p>
+          <p className="text-xs text-gray-600 mt-2 max-w-md mx-auto leading-relaxed">
+            若文件夹内确实有视频/音频，通常是这些文件已被<strong className="text-gray-500">上级目录（或其它）计划</strong>收录。
+            每个文件只能属于一个计划，请删除重复的计划，或改用未被收录的文件夹。
+          </p>
           <button onClick={handleRescan} className="mt-4 text-sky-400 text-sm">重新扫描</button>
         </div>
       )}

@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getTodaySchedule } from "../api/schedule";
 import { addPlan, listPlans } from "../api/plans";
 import { markVideoWatchedEarlier } from "../api/videos";
+import { getSetting } from "../api/settings";
 import { getVideoUrl } from "../api/videoSrc";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
@@ -24,7 +25,6 @@ function formatSeconds(s: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-const PLANS_PER_PAGE = 6;
 
 // ─── Lazy video thumbnail ─────────────────────────────────────────────────────
 // Only creates the <video> element when the card scrolls into view.
@@ -291,10 +291,16 @@ export default function HomePage() {
   const { isTV, isAndroid } = usePlatform();
   const [todayItems, setTodayItems] = useState<TodayPlanItem[]>([]);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
-  const [showAllPlans, setShowAllPlans] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [addNotice, setAddNotice] = useState<string | null>(null);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [scanRoot, setScanRoot] = useState<string>("");
+
+  // Load the configured scan root (Settings) so add-plan can start from there
+  useEffect(() => {
+    getSetting("scan_root_dir").then((v) => { if (v) setScanRoot(v); });
+  }, []);
 
   // Flatten background tracks from AppContext (already loaded, includes play_count_30d)
   const bgTopTracks = bgAudioPlans
@@ -318,8 +324,17 @@ export default function HomePage() {
   const doAddPlan = async (folderPath: string) => {
     setAdding(true);
     setAddError(null);
+    setAddNotice(null);
     try {
-      await addPlan(folderPath);
+      const report = await addPlan(folderPath);
+      // Tell the user exactly what the scan found
+      const parts = [`发现 ${report.found} 个媒体文件`, `新增 ${report.added} 个`];
+      if (report.skipped > 0) {
+        const names = report.skipped_names.slice(0, 5).join("、");
+        const more = report.skipped_names.length < report.skipped ? " 等" : "";
+        parts.push(`${report.skipped} 个已被其它计划收录（${names}${more}）`);
+      }
+      setAddNotice(parts.join("，"));
       await loadData();
     } catch (e) {
       setAddError(String(e));
@@ -336,7 +351,11 @@ export default function HomePage() {
     setAdding(true);
     setAddError(null);
     try {
-      const selected = await open({ directory: true, multiple: false });
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: scanRoot || undefined,
+      });
       if (selected) await doAddPlan(String(selected));
     } catch (e) {
       setAddError(String(e));
@@ -363,13 +382,12 @@ export default function HomePage() {
 
   const hasActivePlans = todayItems.length > 0;
   const allDoneToday = hasActivePlans && allPendingTasks.length === 0;
-  const visiblePlans = showAllPlans ? allPlans : allPlans.slice(0, PLANS_PER_PAGE);
-  const hiddenCount = allPlans.length - PLANS_PER_PAGE;
 
   return (
     <div>
       {showFolderPicker && (
         <FolderPickerModal
+          initialPath={scanRoot || undefined}
           onSelect={(path) => { setShowFolderPicker(false); doAddPlan(path); }}
           onCancel={() => setShowFolderPicker(false)}
         />
@@ -427,6 +445,14 @@ export default function HomePage() {
         </div>
       )}
 
+      {addNotice && (
+        <div className="mb-4 px-4 py-3 bg-sky-900/40 border border-sky-700/60 rounded-lg text-sm text-sky-200 flex items-start gap-2">
+          <span className="shrink-0">📋</span>
+          <span className="flex-1">{addNotice}</span>
+          <button onClick={() => setAddNotice(null)} className="shrink-0 text-sky-400 hover:text-sky-200">✕</button>
+        </div>
+      )}
+
       {/* ── Today's tasks ── */}
       {!hasActivePlans ? (
         <div className="bg-gray-800/40 border border-dashed border-gray-700 rounded-xl px-6 py-10 text-center mb-8">
@@ -435,12 +461,7 @@ export default function HomePage() {
           <p className="text-sm text-gray-500 mb-4">
             进入某个计划，点击「加入每日计划」，首页会每天推荐要看的集数
           </p>
-          <button
-            onClick={() => setShowAllPlans(true)}
-            className="text-sky-400 text-sm hover:text-sky-300 transition-colors"
-          >
-            浏览全部计划 →
-          </button>
+          <p className="text-sky-400 text-sm">下方可浏览全部计划 ↓</p>
         </div>
       ) : allDoneToday ? (
         <div className="bg-green-900/15 border border-green-800/30 rounded-xl px-6 py-8 text-center mb-8">
@@ -564,26 +585,10 @@ export default function HomePage() {
             <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
               全部计划 ({allPlans.length})
             </h2>
-            {hiddenCount > 0 && !showAllPlans && (
-              <button
-                onClick={() => setShowAllPlans(true)}
-                className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
-              >
-                查看全部 +{hiddenCount} 个
-              </button>
-            )}
-            {showAllPlans && allPlans.length > PLANS_PER_PAGE && (
-              <button
-                onClick={() => setShowAllPlans(false)}
-                className="text-xs text-gray-500 hover:text-gray-400 transition-colors"
-              >
-                收起
-              </button>
-            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {visiblePlans.map((plan) => (
+            {allPlans.map((plan) => (
               <MiniPlanCard key={plan.id} plan={plan} />
             ))}
           </div>

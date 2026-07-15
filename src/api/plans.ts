@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Plan, BackgroundAudioPlan, BackgroundTrack } from "../types";
+import type { Plan, BackgroundAudioPlan, BackgroundTrack, ScanReport } from "../types";
 
 export const addPlan = (
   folderPath: string,
   name?: string,
-): Promise<Plan> =>
+): Promise<ScanReport> =>
   invoke("add_plan", { folderPath, name: name ?? null, scanVideo: null, scanAudio: null, audioRole: null });
 
 export const listPlans = (): Promise<Plan[]> => invoke("list_plans");
@@ -12,7 +12,7 @@ export const listPlans = (): Promise<Plan[]> => invoke("list_plans");
 export const deletePlan = (planId: number): Promise<void> =>
   invoke("delete_plan", { planId });
 
-export const rescanPlan = (planId: number): Promise<Plan> =>
+export const rescanPlan = (planId: number): Promise<ScanReport> =>
   invoke("rescan_plan", { planId });
 
 export const activatePlan = (planId: number, episodesPerDay: number): Promise<void> =>
