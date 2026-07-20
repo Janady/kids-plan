@@ -1,7 +1,17 @@
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::time::timeout;
+
+// A stalled socket op must not hang forever. When the WebView abandons a stream
+// (seek / switch video / long pause) it stops reading; without a timeout the
+// server's write_all() blocks indefinitely, leaking the socket + file handle +
+// buffers. Enough leaked tasks exhaust file descriptors, after which new videos
+// and thumbnails can't load until the app restarts.
+const READ_TIMEOUT: Duration = Duration::from_secs(15);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 static PORT: OnceLock<u16> = OnceLock::new();
 
@@ -31,10 +41,11 @@ pub async fn start() -> u16 {
 }
 
 async fn handle(mut socket: tokio::net::TcpStream) {
-    // Read request headers (max 8 KiB)
+    // Read request headers (max 8 KiB), bounded by a timeout to avoid slow/stuck
+    // connections holding the task open forever.
     let mut buf = vec![0u8; 8192];
-    let n = match socket.read(&mut buf).await {
-        Ok(n) if n > 0 => n,
+    let n = match timeout(READ_TIMEOUT, socket.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => n,
         _ => return,
     };
     let request = match std::str::from_utf8(&buf[..n]) {
@@ -175,7 +186,10 @@ async fn serve_file(
         )
     };
 
-    if socket.write_all(header.as_bytes()).await.is_err() {
+    if !matches!(
+        timeout(WRITE_TIMEOUT, socket.write_all(header.as_bytes())).await,
+        Ok(Ok(()))
+    ) {
         return;
     }
 
@@ -191,7 +205,13 @@ async fn serve_file(
         match reader.read(&mut chunk[..to_read]).await {
             Ok(0) => break,
             Ok(n) => {
-                if socket.write_all(&chunk[..n]).await.is_err() {
+                // Bounded write: if the client stops reading (abandoned stream),
+                // this times out instead of blocking forever — freeing the socket
+                // and file handle so they don't accumulate.
+                if !matches!(
+                    timeout(WRITE_TIMEOUT, socket.write_all(&chunk[..n])).await,
+                    Ok(Ok(()))
+                ) {
                     break;
                 }
                 remaining -= n as u64;
