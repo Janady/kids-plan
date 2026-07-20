@@ -98,17 +98,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     bgRefreshPlans();
   }, [refreshTodayTotal, bgRefreshPlans]);
 
-  // Auto-start background audio when video limit is first exceeded
+  // Auto-start background audio whenever a lock overlay appears (forced break,
+  // bedtime, or daily limit). The user can still pause/adjust manually.
   useEffect(() => {
-    const isExceeded = todayWatchedSeconds >= dailyLimitSeconds;
-    if (isExceeded && !bgAutoStartedRef.current && bgAudioPlans.length > 0 && !bgManuallyStopped.current) {
+    const overlayShown =
+      isBreakRequired || isBedtime || todayWatchedSeconds >= dailyLimitSeconds;
+    // Auto-start once each time an overlay appears. We intentionally ignore the
+    // manual-stop flag here so a break/bedtime always starts music, even if audio
+    // was stopped on the video page moments earlier. bgAutoStartedRef prevents
+    // re-triggering (so a manual pause during the overlay is respected).
+    if (overlayShown && !bgAutoStartedRef.current && bgAudioPlans.length > 0) {
       bgAutoStartedRef.current = true;
+      bgManuallyStopped.current = false;
       setBgIsPlaying(true);
     }
-    if (!isExceeded) {
+    if (!overlayShown) {
       bgAutoStartedRef.current = false;
     }
-  }, [todayWatchedSeconds, dailyLimitSeconds, bgAudioPlans.length]);
+  }, [isBreakRequired, isBedtime, todayWatchedSeconds, dailyLimitSeconds, bgAudioPlans.length]);
 
   const setDailyLimit = useCallback(async (seconds: number) => {
     await setSetting("daily_limit_seconds", String(seconds));
@@ -225,6 +232,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Stop background playback (e.g. when entering the video player). Marked as a
+  // manual stop so the overlay auto-start won't immediately resume it.
+  const bgStop = useCallback(() => {
+    setBgIsPlaying(false);
+    bgManuallyStopped.current = true;
+  }, []);
+
   const bgSetPlan = useCallback((planId: number) => {
     setBgCurrentPlanId(planId);
     setBgCurrentTrackIdx(0);
@@ -333,7 +347,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dismissBreak, notifyVideoPlay, notifyVideoPause, saveBreakSettings,
         isParentMode, toggleParentMode,
         bgAudioPlans, bgCurrentPlanId, bgCurrentTrackIdx, bgScopePlanId, bgIsPlaying, bgLoopMode, bgFullscreen,
-        bgRefreshPlans, bgSetPlan, bgSetTrack, bgSetScope, bgTogglePlay, bgNext, bgPrev, bgSetLoop, bgOnEnded,
+        bgRefreshPlans, bgSetPlan, bgSetTrack, bgSetScope, bgTogglePlay, bgStop, bgNext, bgPrev, bgSetLoop, bgOnEnded,
         bgSetFullscreen,
       }}
     >

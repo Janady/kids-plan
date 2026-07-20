@@ -34,6 +34,7 @@ export interface AppContextValue {
   bgSetTrack: (planId: number, idx: number) => void;
   bgSetScope: (planId: number | null) => void;
   bgTogglePlay: () => void;
+  bgStop: () => void;
   bgNext: () => void;
   bgPrev: () => void;
   bgSetLoop: (mode: LoopMode) => void;

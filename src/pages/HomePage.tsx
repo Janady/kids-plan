@@ -287,7 +287,7 @@ function MiniPlanCard({ plan }: { plan: Plan }) {
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { isLimitExceeded, todayWatchedSeconds, todayAudioSeconds, dailyLimitSeconds, bgAudioPlans, bgSetTrack, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying, bgSetFullscreen } = useAppContext();
+  const { isLimitExceeded, todayWatchedSeconds, todayAudioSeconds, dailyLimitSeconds, bgAudioPlans, bgSetTrack, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying, bgSetFullscreen, isParentMode, toggleParentMode } = useAppContext();
   const { isTV, isAndroid } = usePlatform();
   const [todayItems, setTodayItems] = useState<TodayPlanItem[]>([]);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
@@ -454,7 +454,24 @@ export default function HomePage() {
       )}
 
       {/* ── Today's tasks ── */}
-      {!hasActivePlans ? (
+      {/* In parent mode, playback records no progress and can't advance tasks,
+          so showing today's tasks would be misleading (and tempting to use by
+          mistake). Hide them and prompt to switch back to child mode. */}
+      {isParentMode ? (
+        <div className="bg-amber-900/15 border border-amber-800/30 rounded-xl px-6 py-8 text-center mb-8">
+          <p className="text-3xl mb-3">👨‍👦</p>
+          <p className="text-amber-300 font-medium mb-1">家长模式中，今日任务已隐藏</p>
+          <p className="text-sm text-gray-500 mb-4">
+            家长模式下播放不计时、不推进任务。请切换回儿童模式再开始今日学习。
+          </p>
+          <button
+            onClick={() => toggleParentMode()}
+            className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg text-sm font-medium transition-colors"
+          >
+            切换到儿童模式
+          </button>
+        </div>
+      ) : !hasActivePlans ? (
         <div className="bg-gray-800/40 border border-dashed border-gray-700 rounded-xl px-6 py-10 text-center mb-8">
           <p className="text-3xl mb-3">📋</p>
           <p className="text-gray-300 font-medium mb-1">还没有每日学习计划</p>
@@ -487,8 +504,8 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ── Completed today ── */}
-      {completedItems.length > 0 && (
+      {/* ── Completed today (hidden in parent mode) ── */}
+      {!isParentMode && completedItems.length > 0 && (
         <div className="mb-8">
           <h2 className="text-xs font-semibold text-green-600 uppercase tracking-wider mb-3">
             今日已完成 ✓

@@ -33,8 +33,12 @@ export default function PlayerPage() {
   const [canFinishEarly, setCanFinishEarly] = useState(false);
 
   const { isLimitExceeded, refreshTodayTotal, notifyVideoPlay, notifyVideoPause, isParentMode,
-    isBreakRequired, isBedtime } = useAppContext();
+    isBreakRequired, isBedtime, bgStop } = useAppContext();
   const { isAndroid } = usePlatform();
+
+  // Stop any background music when opening the video player (the video has its
+  // own audio). It will resume automatically if a break/bedtime overlay appears.
+  useEffect(() => { bgStop(); }, [bgStop]);
 
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);

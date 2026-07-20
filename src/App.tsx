@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { NavBar } from "./components/NavBar";
@@ -40,7 +40,11 @@ function StoragePermissionBanner() {
 export default function App() {
   const { isTV } = usePlatform();
   const { bgAudioPlans } = useAppContext();
-  const hasBgAudio = bgAudioPlans.length > 0;
+  const location = useLocation();
+  // On the video player page we don't show the background-audio bar (the video
+  // has its own audio); PlayerPage stops any background playback on entry.
+  const onPlayerPage = /^\/plan\/[^/]+\/video\//.test(location.pathname);
+  const hasBgAudio = bgAudioPlans.length > 0 && !onPlayerPage;
 
   return (
     <div className={`min-h-screen bg-gray-950 text-gray-100 flex flex-col${isTV ? " px-[5vw] py-[3vh]" : ""}`}>
@@ -59,7 +63,7 @@ export default function App() {
         </Routes>
       </main>
       <BreakOverlay />
-      <BackgroundAudioPlayer />
+      {!onPlayerPage && <BackgroundAudioPlayer />}
       <BgFullscreenPlayer />
     </div>
   );
