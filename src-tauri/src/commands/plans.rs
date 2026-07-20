@@ -190,6 +190,62 @@ fn build_plan_with_counts(r: PlanRow, next: Option<NextVideoRow>, is_locked_by_p
     }
 }
 
+// Natural comparison: digit runs compare as numbers, other runs as text.
+// "1v1v1" < "1v2" < "1v2v1"; "2" < "10"; handles differing digit widths and
+// leading zeros. When one is a prefix of the other, the shorter one sorts first.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    fn chunk(s: &str) -> Vec<(bool, String)> {
+        let mut out: Vec<(bool, String)> = Vec::new();
+        for c in s.chars() {
+            let is_digit = c.is_ascii_digit();
+            match out.last_mut() {
+                Some((d, buf)) if *d == is_digit => buf.push(c),
+                _ => out.push((is_digit, c.to_string())),
+            }
+        }
+        out
+    }
+    let (ca, cb) = (chunk(a), chunk(b));
+    for (x, y) in ca.iter().zip(cb.iter()) {
+        let ord = match (x.0, y.0) {
+            (true, true) => {
+                // Compare numerically without parsing (avoids overflow, ignores leading zeros).
+                let (xs, ys) = (x.1.trim_start_matches('0'), y.1.trim_start_matches('0'));
+                xs.len().cmp(&ys.len()).then_with(|| xs.cmp(ys))
+            }
+            (false, false) => x.1.to_lowercase().cmp(&y.1.to_lowercase()),
+            (true, false) => Ordering::Less, // a number sorts before text
+            (false, true) => Ordering::Greater,
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    // Shared prefix: the shorter (fewer chunks / shorter string) comes first.
+    ca.len().cmp(&cb.len()).then_with(|| a.len().cmp(&b.len()))
+}
+
+// Compare two paths component-by-component with natural ordering, so directory
+// structure is preserved while files within a folder sort naturally.
+fn natural_path_cmp(a: &std::path::Path, b: &std::path::Path) -> std::cmp::Ordering {
+    let mut ac = a.components().map(|c| c.as_os_str().to_string_lossy().into_owned());
+    let mut bc = b.components().map(|c| c.as_os_str().to_string_lossy().into_owned());
+    loop {
+        match (ac.next(), bc.next()) {
+            (Some(x), Some(y)) => {
+                let ord = natural_cmp(&x, &y);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (None, None) => return std::cmp::Ordering::Equal,
+        }
+    }
+}
+
 // Returns (file_path, title, sort_order, media_type)
 fn scan_media_files(
     folder: &std::path::Path,
@@ -219,7 +275,7 @@ fn scan_media_files(
             }
         })
         .collect();
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries.sort_by(|a, b| natural_path_cmp(&a.0, &b.0));
 
     Ok(entries
         .into_iter()
@@ -518,6 +574,20 @@ pub async fn rescan_plan(
             // owned by another plan (UNIQUE file_path conflict)
             skipped_names.push(title.clone());
         }
+    }
+
+    // Re-number every row present on disk to the freshly-computed natural order,
+    // so files inserted in the middle (e.g. "1.5.mp4") re-flow correctly and any
+    // previously-wrong ordering is fixed. Rows whose file is gone (kept watched
+    // history) retain their old sort_order.
+    for (file_path, _title, sort_order, _media_type) in &disk_files {
+        sqlx::query("UPDATE videos SET sort_order = ? WHERE plan_id = ? AND file_path = ?")
+            .bind(sort_order)
+            .bind(plan_id)
+            .bind(file_path)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;
