@@ -72,6 +72,19 @@ android {
     }
 }
 
+// Rename the output APK to video-plan-<versionName>-<buildType>.apk so the
+// installer file itself carries the version — avoids installing the wrong build.
+// versionName flows from tauri.conf.json → tauri.properties, so this auto-tracks.
+extensions.getByType(com.android.build.gradle.AppExtension::class.java).apply {
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
+                "video-plan-${variant.versionName}-${variant.buildType.name}.apk"
+        }
+    }
+}
+
 rust {
     rootDirRel = "../../../"
 }

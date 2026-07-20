@@ -241,6 +241,14 @@ function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardP
 
 // ─── Compact plan card for "all plans" section ────────────────────────────────
 
+const PRIORITY_LABELS = ["无", "低", "中", "高"];
+const PRIORITY_BADGE = [
+  "",
+  "bg-blue-900/50 text-blue-300",
+  "bg-yellow-900/50 text-yellow-300",
+  "bg-red-900/50 text-red-300",
+];
+
 function MiniPlanCard({ plan }: { plan: Plan }) {
   const navigate = useNavigate();
   const total = plan.video_count + plan.audio_count;
@@ -256,11 +264,18 @@ function MiniPlanCard({ plan }: { plan: Plan }) {
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="text-sm font-medium text-gray-200 truncate">{plan.name}</span>
-        {!!plan.daily_schedule_active && (
-          <span className="shrink-0 text-[10px] bg-sky-800/60 text-sky-300 px-1.5 py-0.5 rounded">
-            每日{plan.episodes_per_day}集
-          </span>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          {plan.priority > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_BADGE[plan.priority]}`}>
+              优先级·{PRIORITY_LABELS[plan.priority]}
+            </span>
+          )}
+          {!!plan.daily_schedule_active && (
+            <span className="text-[10px] bg-sky-800/60 text-sky-300 px-1.5 py-0.5 rounded">
+              每日{plan.episodes_per_day}集
+            </span>
+          )}
+        </div>
       </div>
       {/* Media type counts */}
       <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-1.5">
