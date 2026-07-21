@@ -181,7 +181,10 @@ export default function PlayerPage() {
     return () => { if (progressTimerRef.current) clearInterval(progressTimerRef.current); };
   }, [vId, isParentMode]);
 
-  // Flush session on unmount
+  // Flush session on unmount, then release the media element's connection.
+  // Leaving this src attached after navigating away can hold one of the
+  // local video server's scarce per-origin connection slots for up to the
+  // server's abandoned-stream timeout, starving thumbnails on the home page.
   useEffect(() => {
     return () => {
       const el = mediaRef.current;
@@ -189,6 +192,7 @@ export default function PlayerPage() {
         pauseSession();
         updateVideoProgress(vId, Math.floor(el.currentTime));
       }
+      if (el) { el.pause(); el.removeAttribute("src"); el.load(); }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

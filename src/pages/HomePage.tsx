@@ -30,10 +30,14 @@ function formatSeconds(s: number): string {
 // Only creates the <video> element when the card scrolls into view.
 // Clears src on unmount so Chromium releases the buffered media data.
 
+const THUMB_RETRY_DELAYS = [1000, 2000, 4000, 8000];
+
 function LazyVideoThumb({ filePath }: { filePath: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [inView, setInView] = useState(false);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Start observing once; disconnect after first intersection (stay loaded)
   useEffect(() => {
@@ -50,10 +54,23 @@ function LazyVideoThumb({ filePath }: { filePath: string }) {
   // Critical: release buffered video data when the card unmounts
   useEffect(() => {
     return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       const v = videoRef.current;
       if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
     };
   }, []);
+
+  // The local video server has a small shared per-origin connection budget
+  // (browsers cap ~6 concurrent HTTP/1.1 connections per host:port), so a
+  // thumbnail can transiently fail to grab a socket while other cards or the
+  // active player are using it. <video> doesn't retry network errors on its
+  // own, so without this the card stays broken even once a slot frees up.
+  const handleError = () => {
+    if (retryCountRef.current >= THUMB_RETRY_DELAYS.length) return;
+    const delay = THUMB_RETRY_DELAYS[retryCountRef.current];
+    retryCountRef.current += 1;
+    retryTimerRef.current = setTimeout(() => { videoRef.current?.load(); }, delay);
+  };
 
   return (
     <div ref={wrapRef} className="absolute inset-0 bg-gray-900">
@@ -70,6 +87,7 @@ function LazyVideoThumb({ filePath }: { filePath: string }) {
             const el = e.currentTarget;
             el.currentTime = Math.min(3, (el.duration || 3) * 0.15);
           }}
+          onError={handleError}
         />
       )}
     </div>
