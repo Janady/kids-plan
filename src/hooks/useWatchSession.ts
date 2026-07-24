@@ -1,47 +1,38 @@
 import { useRef, useCallback } from "react";
-import { recordWatchSession } from "../api/sessions";
+import { recordWatchTick } from "../api/sessions";
 import { useAppContext } from "../context/AppContext";
 
+const TICK_INTERVAL_MS = 3000;
+
 export function useWatchSession(videoId: number) {
-  const sessionStartRef = useRef<number | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { refreshTodayTotal } = useAppContext();
 
-  const startSession = useCallback(() => {
-    if (sessionStartRef.current === null) {
-      sessionStartRef.current = Date.now();
-    }
-  }, []);
-
-  const flushSession = useCallback(async () => {
-    const start = sessionStartRef.current;
-    if (start === null) return;
-
-    const endMs = Date.now();
-    const secondsWatched = Math.floor((endMs - start) / 1000);
-    sessionStartRef.current = null;
-
-    if (secondsWatched <= 0) return;
-
-    const startedAt = new Date(start).toISOString();
-    const endedAt = new Date(endMs).toISOString();
-
-    await recordWatchSession({
-      video_id: videoId,
-      seconds_watched: secondsWatched,
-      started_at: startedAt,
-      ended_at: endedAt,
-    });
-
+  const tick = useCallback(async () => {
+    await recordWatchTick(videoId);
     await refreshTodayTotal();
   }, [videoId, refreshTodayTotal]);
 
+  const startSession = useCallback(() => {
+    if (intervalRef.current !== null) return;
+    tick();
+    intervalRef.current = setInterval(tick, TICK_INTERVAL_MS);
+  }, [tick]);
+
+  const stopSession = useCallback(() => {
+    if (intervalRef.current !== null) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
   const pauseSession = useCallback(async () => {
-    await flushSession();
-  }, [flushSession]);
+    stopSession();
+  }, [stopSession]);
 
   const endSession = useCallback(async () => {
-    await flushSession();
-  }, [flushSession]);
+    stopSession();
+  }, [stopSession]);
 
   return { startSession, pauseSession, endSession };
 }

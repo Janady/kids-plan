@@ -1,14 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { WatchSessionInput } from "../types";
+import type { DistributionSegment } from "../types";
 
-export const recordWatchSession = (session: WatchSessionInput): Promise<void> =>
-  invoke("record_watch_session", { session });
+export const recordWatchTick = (videoId: number): Promise<void> =>
+  invoke("record_watch_tick", { videoId });
 
 export const getTodayWatchedSeconds = (): Promise<number> =>
   invoke("get_today_watched_seconds");
 
 export const getTodayAudioSeconds = (): Promise<number> =>
   invoke("get_today_audio_seconds");
+
+export const getContinuousWatchSeconds = (restGapSeconds: number): Promise<number> =>
+  invoke("get_continuous_watch_seconds", { restGapSeconds });
+
+export const getTodayDistribution = (): Promise<DistributionSegment[]> =>
+  invoke("get_today_distribution");
 
 export const checkDailyLimit = (): Promise<boolean> =>
   invoke("check_daily_limit");

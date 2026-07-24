@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { AppContext } from "./AppContext";
 import { getSetting, setSetting } from "../api/settings";
-import { getTodayWatchedSeconds, getTodayAudioSeconds } from "../api/sessions";
+import { getTodayWatchedSeconds, getTodayAudioSeconds, getContinuousWatchSeconds } from "../api/sessions";
 import { listBackgroundAudio } from "../api/plans";
 import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode } from "../types";
 
 const DEFAULT_DAILY_LIMIT = 3600;
 const DEFAULT_MAX_CONTINUOUS = 2700;
 const DEFAULT_BREAK_DURATION = 300;
+const DEFAULT_REST_GAP = 300;
 
 function isInBlockedRange(start: string, end: string): boolean {
   const now = new Date();
@@ -25,6 +26,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [todayAudioSeconds, setTodayAudioSeconds] = useState(0);
   const [maxContinuousSeconds, setMaxContinuousSeconds] = useState(DEFAULT_MAX_CONTINUOUS);
   const [breakDurationSeconds, setBreakDurationSeconds] = useState(DEFAULT_BREAK_DURATION);
+  const [restGapSeconds, setRestGapSeconds] = useState(DEFAULT_REST_GAP);
   const [blockedRanges, setBlockedRanges] = useState<BlockedTimeRange[]>([]);
   const [isBreakRequired, setIsBreakRequired] = useState(() => {
     const stored = localStorage.getItem("breakEndsAt");
@@ -48,8 +50,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const bgManuallyStopped = useRef(false);
   const bgAutoStartedRef = useRef(false);
 
-  const continuousStartRef = useRef<number | null>(null);
-  const pauseResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Whether a video is currently playing — drives the continuous-watch poll below.
+  const isVideoPlayingRef = useRef(false);
   // Persist break-end timestamp so a forced break survives app restart
   const breakEndsAtRef = useRef<number | null>(
     (() => {
@@ -87,11 +89,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getSetting("daily_limit_seconds"),
       getSetting("max_continuous_minutes"),
       getSetting("break_duration_minutes"),
+      getSetting("rest_gap_minutes"),
       getSetting("blocked_time_ranges"),
-    ]).then(([limit, maxCont, breakDur, blocked]) => {
+    ]).then(([limit, maxCont, breakDur, restGap, blocked]) => {
       if (limit) setDailyLimitSeconds(parseInt(limit, 10));
       if (maxCont) setMaxContinuousSeconds(parseInt(maxCont, 10) * 60);
       if (breakDur) setBreakDurationSeconds(parseInt(breakDur, 10) * 60);
+      if (restGap) setRestGapSeconds(parseInt(restGap, 10) * 60);
       if (blocked) { try { setBlockedRanges(JSON.parse(blocked)); } catch {} }
     });
     refreshTodayTotal();
@@ -123,31 +127,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const saveBreakSettings = useCallback(
-    async (maxMin: number, breakMin: number, ranges: BlockedTimeRange[]) => {
+    async (maxMin: number, breakMin: number, restGapMin: number, ranges: BlockedTimeRange[]) => {
       await Promise.all([
         setSetting("max_continuous_minutes", String(maxMin)),
         setSetting("break_duration_minutes", String(breakMin)),
+        setSetting("rest_gap_minutes", String(restGapMin)),
         setSetting("blocked_time_ranges", JSON.stringify(ranges)),
       ]);
       setMaxContinuousSeconds(maxMin * 60);
       setBreakDurationSeconds(breakMin * 60);
+      setRestGapSeconds(restGapMin * 60);
       setBlockedRanges(ranges);
     },
     []
   );
 
+  // Continuous-watch check: only meaningful while a video is actually playing,
+  // so this polls the backend (which derives it from real tick timestamps,
+  // not wall-clock time) rather than tracking any elapsed time itself.
   useEffect(() => {
-    const tick = () => {
-      if (continuousStartRef.current !== null && !isBreakRequired) {
-        const elapsed = (Date.now() - continuousStartRef.current) / 1000;
+    const tick = async () => {
+      if (isVideoPlayingRef.current && !isBreakRequired) {
+        const elapsed = await getContinuousWatchSeconds(restGapSeconds);
         if (elapsed >= maxContinuousSeconds) {
           const endsAt = Date.now() + breakDurationSeconds * 1000;
           breakEndsAtRef.current = endsAt;
           localStorage.setItem("breakEndsAt", String(endsAt));
           setBreakRemainingSeconds(breakDurationSeconds);
           setIsBreakRequired(true);
-          continuousStartRef.current = null;
-          localStorage.removeItem("continuousStart");
         }
       }
       if (isBreakRequired && breakEndsAtRef.current !== null) {
@@ -159,30 +166,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tick();
     const id = setInterval(tick, 1_000);
     return () => clearInterval(id);
-  }, [isBreakRequired, maxContinuousSeconds, breakDurationSeconds, blockedRanges]);
+  }, [isBreakRequired, maxContinuousSeconds, breakDurationSeconds, restGapSeconds, blockedRanges]);
 
   const notifyVideoPlay = useCallback(() => {
-    if (pauseResetTimerRef.current) { clearTimeout(pauseResetTimerRef.current); pauseResetTimerRef.current = null; }
-    if (continuousStartRef.current === null) {
-      // Resume a persisted continuous-watch window only if it's still fresh.
-      // A stale value can linger in localStorage when the app is killed/backgrounded
-      // before the pause-reset timer fires; resuming it the next day would compute a
-      // huge "elapsed" and wrongly force a break on open. Treat anything older than
-      // the max continuous window as expired and start fresh.
-      const stored = localStorage.getItem("continuousStart");
-      const ts = stored ? parseInt(stored, 10) : NaN;
-      const fresh = !isNaN(ts) && Date.now() - ts < maxContinuousSeconds * 1000;
-      const start = fresh ? ts : Date.now();
-      continuousStartRef.current = start;
-      localStorage.setItem("continuousStart", String(start));
-    }
-  }, [maxContinuousSeconds]);
+    isVideoPlayingRef.current = true;
+  }, []);
 
   const notifyVideoPause = useCallback(() => {
-    pauseResetTimerRef.current = setTimeout(() => {
-      continuousStartRef.current = null;
-      localStorage.removeItem("continuousStart");
-    }, 5 * 60 * 1000);
+    isVideoPlayingRef.current = false;
   }, []);
 
   const dismissBreak = useCallback(() => {
@@ -342,7 +333,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dailyLimitSeconds, todayWatchedSeconds, todayAudioSeconds,
         isLimitExceeded: todayWatchedSeconds >= dailyLimitSeconds,
         setDailyLimit, refreshTodayTotal,
-        maxContinuousSeconds, breakDurationSeconds, blockedRanges,
+        maxContinuousSeconds, breakDurationSeconds, restGapSeconds, blockedRanges,
         isBreakRequired, breakRemainingSeconds, isBedtime,
         dismissBreak, notifyVideoPlay, notifyVideoPause, saveBreakSettings,
         isParentMode, toggleParentMode,

@@ -10,6 +10,7 @@ export interface AppContextValue {
   refreshTodayTotal: () => Promise<void>;
   maxContinuousSeconds: number;
   breakDurationSeconds: number;
+  restGapSeconds: number;
   blockedRanges: BlockedTimeRange[];
   isBreakRequired: boolean;
   breakRemainingSeconds: number;
@@ -17,7 +18,7 @@ export interface AppContextValue {
   dismissBreak: () => void;
   notifyVideoPlay: () => void;
   notifyVideoPause: () => void;
-  saveBreakSettings: (maxMin: number, breakMin: number, ranges: BlockedTimeRange[]) => Promise<void>;
+  saveBreakSettings: (maxMin: number, breakMin: number, restGapMin: number, ranges: BlockedTimeRange[]) => Promise<void>;
   // Parent/Child mode
   isParentMode: boolean;
   toggleParentMode: (password?: string) => Promise<{ success: boolean; error?: string }>;

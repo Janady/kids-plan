@@ -66,11 +66,9 @@ export interface CleanupResult {
   failed: string[];
 }
 
-export interface WatchSessionInput {
-  video_id: number;
-  seconds_watched: number;
-  started_at: string;
-  ended_at: string;
+export interface DistributionSegment {
+  start: string;
+  end: string;
 }
 
 export interface TodayPendingItem {
@@ -113,6 +111,14 @@ export interface OverallStats {
   videos_watched: number;
   plans_completed: number;
   active_days: number;
+}
+
+export type StatsRange = "day" | "week" | "month";
+
+export interface PlanTimeStat {
+  plan_id: number;
+  plan_name: string;
+  seconds: number;
 }
 
 export interface BackgroundTrack {

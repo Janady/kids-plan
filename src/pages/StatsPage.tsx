@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { getDailyStats, getOverallStats } from "../api/stats";
+import { getDailyStats, getOverallStats, getTodayHourlyStats, getPlanTimeStats } from "../api/stats";
+import { getTodayDistribution } from "../api/sessions";
 import { listPlans } from "../api/plans";
-import type { DayStat, OverallStats, Plan } from "../types";
+import type { DayStat, OverallStats, Plan, DistributionSegment, PlanTimeStat, StatsRange } from "../types";
 
 function fmtDuration(s: number): string {
   if (s === 0) return "0 分钟";
@@ -97,50 +98,45 @@ function Heatmap({ dataMap }: { dataMap: Map<string, number> }) {
 
 // ─── Bar chart ───────────────────────────────────────────────────────────────
 
-type ViewMode = "day" | "week" | "month";
-
 interface ChartBar {
   label: string;
+  tooltip: string;
   seconds: number;
 }
 
-function buildBars(dataMap: Map<string, number>, mode: ViewMode): ChartBar[] {
+// day: today's 24 hours. week: this week Sun-Sat (the week containing today).
+// month: the last 30 days ending today.
+function buildBars(dataMap: Map<string, number>, hourlyStats: number[], mode: StatsRange): ChartBar[] {
   const today = new Date();
 
   if (mode === "day") {
-    return Array.from({ length: 14 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(today.getDate() - 13 + i);
-      const key = isoDate(d);
-      return { label: `${d.getMonth() + 1}/${d.getDate()}`, seconds: dataMap.get(key) ?? 0 };
-    });
+    // Label every 3rd hour to avoid crowding 24 bars into one row
+    return hourlyStats.map((seconds, hour) => ({
+      label: hour % 3 === 0 ? `${hour}时` : "",
+      tooltip: `${hour}:00-${hour + 1}:00`,
+      seconds,
+    }));
   }
 
   if (mode === "week") {
-    return Array.from({ length: 8 }, (_, i) => {
-      let total = 0;
-      const startD = new Date(today);
-      startD.setDate(today.getDate() - (7 - i) * 7 + (7 - today.getDay()));
-      for (let d = 0; d < 7; d++) {
-        const date = new Date(startD);
-        date.setDate(startD.getDate() - d);
-        total += dataMap.get(isoDate(date)) ?? 0;
-      }
-      const weekEnd = new Date(startD);
-      return { label: `${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`, seconds: total };
+    const sunday = new Date(today);
+    sunday.setDate(today.getDate() - today.getDay());
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(sunday);
+      d.setDate(sunday.getDate() + i);
+      const key = isoDate(d);
+      const label = `${d.getMonth() + 1}/${d.getDate()}`;
+      return { label, tooltip: label, seconds: dataMap.get(key) ?? 0 };
     });
   }
 
-  // month
-  return Array.from({ length: 12 }, (_, i) => {
-    const d = new Date(today.getFullYear(), today.getMonth() - 11 + i, 1);
-    const y = d.getFullYear();
-    const mo = d.getMonth() + 1;
-    let total = 0;
-    for (const [key, val] of dataMap) {
-      if (key.startsWith(`${y}-${String(mo).padStart(2, "0")}`)) total += val;
-    }
-    return { label: `${mo}月`, seconds: total };
+  // month — last 30 days. Label every 5th day to avoid crowding 30 bars into one row.
+  return Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - 29 + i);
+    const key = isoDate(d);
+    const tooltip = `${d.getMonth() + 1}/${d.getDate()}`;
+    return { label: i % 5 === 0 ? tooltip : "", tooltip, seconds: dataMap.get(key) ?? 0 };
   });
 }
 
@@ -166,7 +162,7 @@ function BarChart({ bars }: { bars: ChartBar[] }) {
               <div
                 className="w-full max-w-[28px] bg-sky-600 hover:bg-sky-500 rounded-t transition-all"
                 style={{ height: h || 2 }}
-                title={`${bar.label}: ${fmtDuration(bar.seconds)}`}
+                title={`${bar.tooltip}: ${fmtDuration(bar.seconds)}`}
               />
               {bar.seconds > 0 && (
                 <div className="absolute -top-4 text-[9px] font-medium text-sky-300 whitespace-nowrap">
@@ -182,31 +178,116 @@ function BarChart({ bars }: { bars: ChartBar[] }) {
   );
 }
 
+// ─── Today's activity timeline ─────────────────────────────────────────────────
+
+function TodayTimeline({ segments }: { segments: DistributionSegment[] }) {
+  const dayStartMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  const pctOfDay = (iso: string) =>
+    Math.min(100, Math.max(0, ((new Date(iso).getTime() - dayStartMs) / DAY_MS) * 100));
+
+  const hourMarks = [0, 6, 12, 18, 24];
+
+  return (
+    <div>
+      <div className="relative h-6 bg-gray-900 rounded-lg overflow-hidden">
+        {segments.length === 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-600">
+            今天还没有观看记录
+          </div>
+        ) : (
+          segments.map((seg, i) => {
+            const left = pctOfDay(seg.start);
+            const right = pctOfDay(seg.end);
+            const width = Math.max(right - left, 0.3);
+            return (
+              <div
+                key={i}
+                title={`${new Date(seg.start).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} - ${new Date(seg.end).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`}
+                className="absolute top-0 h-full bg-sky-500 hover:bg-sky-400 transition-colors"
+                style={{ left: `${left}%`, width: `${width}%` }}
+              />
+            );
+          })
+        )}
+      </div>
+      <div className="flex justify-between mt-1 text-[10px] text-gray-600">
+        {hourMarks.map((h) => (
+          <span key={h}>{h}:00</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Per-plan time list ─────────────────────────────────────────────────────────
+
+function PlanTimeList({ stats }: { stats: PlanTimeStat[] }) {
+  if (stats.length === 0) {
+    return <p className="text-xs text-gray-600 py-2">暂无数据</p>;
+  }
+  const maxSec = Math.max(...stats.map((s) => s.seconds), 1);
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {stats.map((s) => (
+        <div key={s.plan_id} className="flex items-center gap-3">
+          <span className="text-sm text-gray-300 truncate w-24 shrink-0">{s.plan_name}</span>
+          <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-sky-600 rounded-full"
+              style={{ width: `${Math.max((s.seconds / maxSec) * 100, 2)}%` }}
+            />
+          </div>
+          <span className="text-xs text-gray-500 w-16 text-right shrink-0">{fmtDuration(s.seconds)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function StatsPage() {
   const navigate = useNavigate();
   const [dailyStats, setDailyStats] = useState<DayStat[]>([]);
+  const [hourlyStats, setHourlyStats] = useState<number[]>(Array(24).fill(0));
   const [overall, setOverall] = useState<OverallStats | null>(null);
   const [completedPlans, setCompletedPlans] = useState<Plan[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>("day");
+  const [todaySegments, setTodaySegments] = useState<DistributionSegment[]>([]);
+  const [planStats, setPlanStats] = useState<PlanTimeStat[]>([]);
+  const [viewMode, setViewMode] = useState<StatsRange>("day");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([getDailyStats(), getOverallStats(), listPlans()]).then(
-      ([daily, stats, plans]) => {
-        setDailyStats(daily);
-        setOverall(stats);
-        setCompletedPlans(plans.filter((p) => p.status === "completed"));
-        setLoading(false);
-      }
-    );
+    Promise.all([
+      getDailyStats(),
+      getOverallStats(),
+      listPlans(),
+      getTodayDistribution(),
+      getTodayHourlyStats(),
+    ]).then(([daily, stats, plans, segments, hourly]) => {
+      setDailyStats(daily);
+      setOverall(stats);
+      setCompletedPlans(plans.filter((p) => p.status === "completed"));
+      setTodaySegments(segments);
+      setHourlyStats(hourly);
+      setLoading(false);
+    });
   }, []);
 
+  // Shared by the bar chart and the per-plan list, so both switch together.
+  useEffect(() => {
+    getPlanTimeStats(viewMode).then(setPlanStats);
+  }, [viewMode]);
+
   const dataMap = new Map(dailyStats.map((d) => [d.date_key, d.total_seconds]));
-  const bars = buildBars(dataMap, viewMode);
+  const bars = buildBars(dataMap, hourlyStats, viewMode);
 
   if (loading) return <div className="text-center text-gray-500 py-20">加载中…</div>;
+
+  const rangeLabel = (m: StatsRange) => (m === "day" ? "日" : m === "week" ? "周" : "月");
 
   return (
     <div>
@@ -235,6 +316,12 @@ export default function StatsPage() {
         </div>
       )}
 
+      {/* Today's activity timeline */}
+      <section className="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-6">
+        <h2 className="text-sm font-semibold text-gray-300 mb-4">今日观看时段分布</h2>
+        <TodayTimeline segments={todaySegments} />
+      </section>
+
       {/* Bar chart */}
       <section className="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -250,12 +337,20 @@ export default function StatsPage() {
                     : "bg-gray-700 text-gray-400 hover:bg-gray-600"
                 }`}
               >
-                {m === "day" ? "日" : m === "week" ? "周" : "月"}
+                {rangeLabel(m)}
               </button>
             ))}
           </div>
         </div>
         <BarChart bars={bars} />
+
+        {/* Per-plan breakdown for the same range */}
+        <div className="mt-6 pt-5 border-t border-gray-700">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            各计划用时（{viewMode === "day" ? "今日" : viewMode === "week" ? "近7天" : "近30天"}）
+          </h3>
+          <PlanTimeList stats={planStats} />
+        </div>
       </section>
 
       {/* Heatmap */}

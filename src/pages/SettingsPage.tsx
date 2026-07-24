@@ -36,12 +36,13 @@ function SaveBtn({ saved, onClick, label = "保存" }: { saved: boolean; onClick
 
 export default function SettingsPage() {
   const { isParentMode, dailyLimitSeconds, setDailyLimit, maxContinuousSeconds,
-    breakDurationSeconds, blockedRanges, saveBreakSettings } = useAppContext();
+    breakDurationSeconds, restGapSeconds, blockedRanges, saveBreakSettings } = useAppContext();
 
   const [dHours, setDHours] = useState(String(Math.floor(dailyLimitSeconds / 3600)));
   const [dMins, setDMins] = useState(String(Math.floor((dailyLimitSeconds % 3600) / 60)));
   const [maxContMin, setMaxContMin] = useState(String(Math.round(maxContinuousSeconds / 60)));
   const [breakDurMin, setBreakDurMin] = useState(String(Math.round(breakDurationSeconds / 60)));
+  const [restGapMin, setRestGapMin] = useState(String(Math.round(restGapSeconds / 60)));
   const [ranges, setRanges] = useState<BlockedTimeRange[]>(blockedRanges);
   const [newStart, setNewStart] = useState("22:00");
   const [newEnd, setNewEnd] = useState("07:00");
@@ -84,8 +85,9 @@ export default function SettingsPage() {
   const handleSaveBreak = async () => {
     const maxMin = parseInt(maxContMin || "45", 10);
     const breakMin = parseInt(breakDurMin || "5", 10);
-    if (maxMin <= 0 || breakMin <= 0) return;
-    await saveBreakSettings(maxMin, breakMin, ranges);
+    const restGap = parseInt(restGapMin || "5", 10);
+    if (maxMin <= 0 || breakMin <= 0 || restGap <= 0) return;
+    await saveBreakSettings(maxMin, breakMin, restGap, ranges);
     setSavedBreak(true);
     setTimeout(() => setSavedBreak(false), 2000);
   };
@@ -179,6 +181,10 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-300">强制休息时长</span>
             <NumberInput value={breakDurMin} onChange={setBreakDurMin} min={1} max={60} unit="分钟" />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-300">暂停多久算中断连续观看</span>
+            <NumberInput value={restGapMin} onChange={setRestGapMin} min={1} max={60} unit="分钟" />
           </div>
         </div>
         <SaveBtn saved={savedBreak} onClick={handleSaveBreak} />
