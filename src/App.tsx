@@ -39,12 +39,18 @@ function StoragePermissionBanner() {
 
 export default function App() {
   const { isTV } = usePlatform();
-  const { bgAudioPlans } = useAppContext();
+  const { bgAudioPlans, isBreakRequired, isBedtime } = useAppContext();
   const location = useLocation();
   // On the video player page we don't show the background-audio bar (the video
   // has its own audio); PlayerPage stops any background playback on entry.
+  // Exception: if a break/bedtime overlay is showing (can happen while still on
+  // the player route), background music should still play — BackgroundAudioPlayer
+  // owns the only <audio> element that actually produces sound, so it must stay
+  // mounted whenever the overlay's music controls are visible.
   const onPlayerPage = /^\/plan\/[^/]+\/video\//.test(location.pathname);
-  const hasBgAudio = bgAudioPlans.length > 0 && !onPlayerPage;
+  const overlayActive = isBreakRequired || isBedtime;
+  const showBgPlayer = !onPlayerPage || overlayActive;
+  const hasBgAudio = bgAudioPlans.length > 0 && showBgPlayer;
 
   return (
     <div className={`min-h-screen bg-gray-950 text-gray-100 flex flex-col${isTV ? " px-[5vw] py-[3vh]" : ""}`}>
@@ -63,7 +69,7 @@ export default function App() {
         </Routes>
       </main>
       <BreakOverlay />
-      {!onPlayerPage && <BackgroundAudioPlayer />}
+      {showBgPlayer && <BackgroundAudioPlayer />}
       <BgFullscreenPlayer />
     </div>
   );

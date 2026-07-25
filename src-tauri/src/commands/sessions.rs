@@ -88,10 +88,15 @@ pub async fn check_daily_limit(state: State<'_, AppState>) -> Result<bool, Strin
 // Continuous watch time: walk today's video ticks backward from now, summing
 // the run of ticks whose gaps are all <= rest_gap_seconds. A gap larger than
 // that (or the latest tick itself being older than that) breaks the streak.
+// `since`, when given, additionally excludes any tick at or before that time —
+// used to force a reset right after an enforced break ends, since a forced
+// break's duration is independently configurable from rest_gap_seconds and
+// isn't guaranteed to exceed it.
 #[tauri::command]
 pub async fn get_continuous_watch_seconds(
     state: State<'_, AppState>,
     rest_gap_seconds: i64,
+    since: Option<String>,
 ) -> Result<i64, String> {
     let date_key = today_key();
     let rows: Vec<(String,)> = sqlx::query_as(
@@ -106,10 +111,16 @@ pub async fn get_continuous_watch_seconds(
     .await
     .map_err(|e| e.to_string())?;
 
+    let since_ts: Option<DateTime<Utc>> = since
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
     let timestamps: Vec<DateTime<Utc>> = rows
         .iter()
         .filter_map(|(s,)| DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&Utc))
+        .filter(|dt| since_ts.is_none_or(|since| *dt > since))
         .collect();
 
     let Some(latest) = timestamps.first() else {

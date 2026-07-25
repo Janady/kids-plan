@@ -10,8 +10,8 @@ export const getTodayWatchedSeconds = (): Promise<number> =>
 export const getTodayAudioSeconds = (): Promise<number> =>
   invoke("get_today_audio_seconds");
 
-export const getContinuousWatchSeconds = (restGapSeconds: number): Promise<number> =>
-  invoke("get_continuous_watch_seconds", { restGapSeconds });
+export const getContinuousWatchSeconds = (restGapSeconds: number, since?: string): Promise<number> =>
+  invoke("get_continuous_watch_seconds", { restGapSeconds, since: since ?? null });
 
 export const getTodayDistribution = (): Promise<DistributionSegment[]> =>
   invoke("get_today_distribution");

@@ -18,6 +18,12 @@ function formatTime(s: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+// The local video server has a small shared per-origin connection budget, so
+// the player can transiently fail to grab a socket while home-page thumbnails
+// or other cards are using it. Without a retry the element just stays in an
+// error state forever, requiring an app restart to recover.
+const PLAYER_RETRY_DELAYS = [800, 1600, 3200, 6000];
+
 export default function PlayerPage() {
   const { planId, videoId } = useParams<{ planId: string; videoId: string }>();
   const navigate = useNavigate();
@@ -44,6 +50,8 @@ export default function PlayerPage() {
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const durationSetRef = useRef(false);
   const resumeShownRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { startSession, pauseSession, endSession } = useWatchSession(vId);
 
@@ -94,6 +102,8 @@ export default function PlayerPage() {
     resumeShownRef.current = false;
     setResumedFrom(null);
     setDuration(0);
+    retryCountRef.current = 0;
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
 
     Promise.all([listVideosForPlan(pId), listPlans()]).then(([videos, plans]) => {
       const found = videos.find((v) => v.id === vId) ?? null;
@@ -102,6 +112,13 @@ export default function PlayerPage() {
       setLoading(false);
     });
   }, [pId, vId]);
+
+  const handleMediaError = useCallback(() => {
+    if (retryCountRef.current >= PLAYER_RETRY_DELAYS.length) return;
+    const delay = PLAYER_RETRY_DELAYS[retryCountRef.current];
+    retryCountRef.current += 1;
+    retryTimerRef.current = setTimeout(() => { mediaRef.current?.load(); }, delay);
+  }, []);
 
   const handleLoadedMetadata = useCallback(async () => {
     const el = mediaRef.current;
@@ -192,6 +209,7 @@ export default function PlayerPage() {
         pauseSession();
         updateVideoProgress(vId, Math.floor(el.currentTime));
       }
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       if (el) { el.pause(); el.removeAttribute("src"); el.load(); }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -271,6 +289,7 @@ export default function PlayerPage() {
               onPause={handlePause}
               onTimeUpdate={handleTimeUpdate}
               onEnded={handleEnded}
+              onError={handleMediaError}
             />
           </div>
 
@@ -339,6 +358,7 @@ export default function PlayerPage() {
               onPause={handlePause}
               onTimeUpdate={handleTimeUpdate}
               onEnded={handleEnded}
+              onError={handleMediaError}
             />
           </div>
 

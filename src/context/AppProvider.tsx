@@ -60,6 +60,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return !isNaN(ts) && ts > Date.now() ? ts : null;
     })()
   );
+  // When a forced break ends, ticks from before this timestamp are excluded from
+  // the continuous-watch calculation — otherwise, if the user's configured rest
+  // gap isn't shorter than the break duration itself, the pre-break streak still
+  // counts as continuous and the break re-triggers the instant a new tick lands.
+  const lastBreakEndAtRef = useRef<string | null>(null);
 
   const refreshTodayTotal = useCallback(async () => {
     const [video, audio] = await Promise.all([
@@ -148,7 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const tick = async () => {
       if (isVideoPlayingRef.current && !isBreakRequired) {
-        const elapsed = await getContinuousWatchSeconds(restGapSeconds);
+        const elapsed = await getContinuousWatchSeconds(restGapSeconds, lastBreakEndAtRef.current ?? undefined);
         if (elapsed >= maxContinuousSeconds) {
           const endsAt = Date.now() + breakDurationSeconds * 1000;
           breakEndsAtRef.current = endsAt;
@@ -180,6 +185,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (breakRemainingSeconds <= 0) {
       setIsBreakRequired(false);
       breakEndsAtRef.current = null;
+      lastBreakEndAtRef.current = new Date().toISOString();
       localStorage.removeItem("breakEndsAt");
     }
   }, [breakRemainingSeconds]);
