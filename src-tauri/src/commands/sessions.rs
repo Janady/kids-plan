@@ -150,15 +150,17 @@ pub struct DistributionSegment {
     pub end: String,
 }
 
-// Merge today's ticks (any media type) into contiguous segments for the
-// "today's activity" timeline, joining ticks that are at most 4s apart
-// (tolerates minor heartbeat jitter without merging genuinely separate sessions).
+// Merge a day's ticks (any media type) into contiguous segments for the
+// "activity" timeline, joining ticks that are at most 4s apart (tolerates
+// minor heartbeat jitter without merging genuinely separate sessions).
+// `date_key`, when given, selects a specific day ("YYYY-MM-DD"); defaults to today.
 #[tauri::command]
 pub async fn get_today_distribution(
     state: State<'_, AppState>,
+    date_key: Option<String>,
 ) -> Result<Vec<DistributionSegment>, String> {
     const MERGE_GAP_SECONDS: i64 = 4;
-    let date_key = today_key();
+    let date_key = date_key.unwrap_or_else(today_key);
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT tick_at FROM watch_ticks WHERE date_key = ? ORDER BY tick_at ASC",
     )

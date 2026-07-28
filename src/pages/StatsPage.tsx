@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDailyStats, getOverallStats, getTodayHourlyStats, getPlanTimeStats } from "../api/stats";
 import { getTodayDistribution } from "../api/sessions";
@@ -189,21 +189,66 @@ function BarChart({ bars }: { bars: ChartBar[] }) {
 
 // ─── Today's activity summary ─────────────────────────────────────────────────
 
-function TodaySummary({ segments }: { segments: DistributionSegment[] }) {
+function TodaySummary({ segments, dateKey, onDateChange }: {
+  segments: DistributionSegment[];
+  dateKey: string;
+  onDateChange: (next: string) => void;
+}) {
   const totalSeconds = segments.reduce((sum, seg) => {
     const start = new Date(seg.start).getTime();
     const end = new Date(seg.end).getTime();
     return sum + Math.floor((end - start) / 1000);
   }, 0);
 
+  const todayKey = isoDate(new Date());
+  const shiftDate = (deltaDays: number) => {
+    const d = new Date(dateKey + "T00:00:00");
+    d.setDate(d.getDate() + deltaDays);
+    onDateChange(isoDate(d));
+  };
+
   return (
     <div>
-      <div className="text-lg font-semibold text-gray-200 mb-3">
-        今日总时长 {fmtHMS(totalSeconds)}
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-lg font-semibold text-gray-200">
+          {dateKey === todayKey ? "今日" : dateKey} 总时长 {fmtHMS(totalSeconds)}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => shiftDate(-1)}
+            className="text-gray-400 hover:text-gray-200 text-sm px-2 py-1 rounded transition-colors"
+          >
+            ‹
+          </button>
+          <input
+            type="date"
+            value={dateKey}
+            max={todayKey}
+            onChange={(e) => e.target.value && onDateChange(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded text-sm text-gray-300 px-2 py-1"
+          />
+          <button
+            onClick={() => shiftDate(1)}
+            disabled={dateKey >= todayKey}
+            className="text-gray-400 hover:text-gray-200 text-sm px-2 py-1 rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-400"
+          >
+            ›
+          </button>
+          {dateKey !== todayKey && (
+            <button
+              onClick={() => onDateChange(todayKey)}
+              className="text-sky-400 hover:text-sky-300 text-xs px-2 py-1 rounded transition-colors"
+            >
+              今天
+            </button>
+          )}
+        </div>
       </div>
 
       {segments.length === 0 ? (
-        <div className="text-sm text-gray-500 py-2">今天还没有观看记录</div>
+        <div className="text-sm text-gray-500 py-2">
+          {dateKey === todayKey ? "今天还没有观看记录" : "这一天没有观看记录"}
+        </div>
       ) : (
         <div className="max-h-64 overflow-y-auto space-y-2">
           {segments.map((seg, i) => {
@@ -261,6 +306,7 @@ export default function StatsPage() {
   const [overall, setOverall] = useState<OverallStats | null>(null);
   const [completedPlans, setCompletedPlans] = useState<Plan[]>([]);
   const [todaySegments, setTodaySegments] = useState<DistributionSegment[]>([]);
+  const [segmentsDateKey, setSegmentsDateKey] = useState(() => isoDate(new Date()));
   const [planStats, setPlanStats] = useState<PlanTimeStat[]>([]);
   const [viewMode, setViewMode] = useState<StatsRange>("day");
   const [loading, setLoading] = useState(true);
@@ -281,6 +327,17 @@ export default function StatsPage() {
       setLoading(false);
     });
   }, []);
+
+  // Refetch the segment list whenever the selected date changes. Skips the
+  // very first run, since the initial-load effect above already fetched today.
+  const segmentsMountedRef = useRef(false);
+  useEffect(() => {
+    if (!segmentsMountedRef.current) {
+      segmentsMountedRef.current = true;
+      return;
+    }
+    getTodayDistribution(segmentsDateKey).then(setTodaySegments);
+  }, [segmentsDateKey]);
 
   // Shared by the bar chart and the per-plan list, so both switch together.
   useEffect(() => {
@@ -321,10 +378,14 @@ export default function StatsPage() {
         </div>
       )}
 
-      {/* Today's activity summary */}
+      {/* Activity summary for a selectable day (defaults to today) */}
       <section className="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-6">
-        <h2 className="text-sm font-semibold text-gray-300 mb-4">今日观看时段</h2>
-        <TodaySummary segments={todaySegments} />
+        <h2 className="text-sm font-semibold text-gray-300 mb-4">观看时段</h2>
+        <TodaySummary
+          segments={todaySegments}
+          dateKey={segmentsDateKey}
+          onDateChange={setSegmentsDateKey}
+        />
       </section>
 
       {/* Bar chart */}

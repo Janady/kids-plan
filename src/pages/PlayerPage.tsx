@@ -86,10 +86,14 @@ export default function PlayerPage() {
   }, [isFullscreen]);
 
   // Break / bedtime / daily-limit must be visible over the video: leave fullscreen.
+  // Also cancel any pending connection-retry reload — resuming the media resource
+  // there would trigger the element's autoplay attribute and silently resume
+  // playback (and tick recording) underneath the overlay.
   useEffect(() => {
     if (isBreakRequired || isBedtime || isLimitExceeded) {
       const el = mediaRef.current;
       if (el && !el.paused) el.pause();
+      if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
       setIsFullscreen(false);
     }
   }, [isBreakRequired, isBedtime, isLimitExceeded]);
@@ -141,6 +145,14 @@ export default function PlayerPage() {
   }, [video, vId]);
 
   const handlePlay = useCallback(async () => {
+    // Prevent tick recording while a lock overlay is showing. The element can still
+    // resume playback via autoplay + retry-triggered .load(), but no session starts.
+    if (isBreakRequired || isBedtime || isLimitExceeded) {
+      const el = mediaRef.current;
+      if (el && !el.paused) el.pause();
+      return;
+    }
+
     if (!isAudio) notifyVideoPlay();
     setEnded(false);
     if (!isParentMode) {
@@ -150,7 +162,7 @@ export default function PlayerPage() {
         setVideo((v) => (v ? { ...v, status: "watching" } : v));
       }
     }
-  }, [video, vId, startSession, notifyVideoPlay, isParentMode, isAudio]);
+  }, [video, vId, startSession, notifyVideoPlay, isParentMode, isAudio, isBreakRequired, isBedtime, isLimitExceeded]);
 
   const handlePause = useCallback(async () => {
     if (!isAudio) notifyVideoPause();

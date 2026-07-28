@@ -13,8 +13,8 @@ export const getTodayAudioSeconds = (): Promise<number> =>
 export const getContinuousWatchSeconds = (restGapSeconds: number, since?: string): Promise<number> =>
   invoke("get_continuous_watch_seconds", { restGapSeconds, since: since ?? null });
 
-export const getTodayDistribution = (): Promise<DistributionSegment[]> =>
-  invoke("get_today_distribution");
+export const getTodayDistribution = (dateKey?: string): Promise<DistributionSegment[]> =>
+  invoke("get_today_distribution", { dateKey: dateKey ?? null });
 
 export const checkDailyLimit = (): Promise<boolean> =>
   invoke("check_daily_limit");
