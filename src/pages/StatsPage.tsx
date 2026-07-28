@@ -194,11 +194,7 @@ function TodaySummary({ segments, dateKey, onDateChange }: {
   dateKey: string;
   onDateChange: (next: string) => void;
 }) {
-  const totalSeconds = segments.reduce((sum, seg) => {
-    const start = new Date(seg.start).getTime();
-    const end = new Date(seg.end).getTime();
-    return sum + Math.floor((end - start) / 1000);
-  }, 0);
+  const totalSeconds = segments.reduce((sum, seg) => sum + seg.seconds, 0);
 
   const todayKey = isoDate(new Date());
   const shiftDate = (deltaDays: number) => {
@@ -254,14 +250,13 @@ function TodaySummary({ segments, dateKey, onDateChange }: {
           {segments.map((seg, i) => {
             const start = new Date(seg.start);
             const end = new Date(seg.end);
-            const duration = Math.floor((end.getTime() - start.getTime()) / 1000);
             const startTime = start.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
             const endTime = end.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
             return (
               <div key={i} className="flex items-center gap-3 text-sm text-gray-300">
                 <span className="font-mono">{startTime} - {endTime}</span>
-                <span className="text-gray-500">({fmtHMS(duration)})</span>
+                <span className="text-gray-500">({fmtHMS(seg.seconds)})</span>
               </div>
             );
           })}

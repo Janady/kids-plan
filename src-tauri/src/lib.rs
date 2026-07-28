@@ -90,7 +90,7 @@ pub fn run() {
                 pool
             });
 
-            app.manage(AppState { db: pool });
+            app.manage(AppState { db: pool, tick_lock: tokio::sync::Mutex::new(()) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

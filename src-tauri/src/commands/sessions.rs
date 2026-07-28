@@ -1,5 +1,5 @@
 use crate::db::AppState;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use serde::Serialize;
 use tauri::State;
 
@@ -9,13 +9,52 @@ fn today_key() -> String {
     Local::now().format("%Y-%m-%d").to_string()
 }
 
+// Record one watch heartbeat. Ticks are meant to land every TICK_SECONDS, but the
+// frontend timer can drift (backgrounding, pause/resume races, slow IPC), so the
+// timestamp actually stored is reconciled against the most recent tick overall
+// (any video — a switch between videos is still continuous watching):
+//   gap < 2s        → drop (duplicate / retry-storm tick, would double-count)
+//   2s <= gap <= 3s → snap to last_tick_at + TICK_SECONDS, keeping the tick grid
+//                     exact instead of accumulating float drift
+//   gap > 3s        → real pause happened; insert at the actual receive time so
+//                     the stored gap reflects it
+// The lock serializes the read-last-tick-then-insert sequence: without it, two
+// ticks arriving within the same few milliseconds could both read the same
+// "last tick" and both decide to insert, defeating the < 2s dedup above.
 #[tauri::command]
 pub async fn record_watch_tick(state: State<'_, AppState>, video_id: i64) -> Result<(), String> {
+    let _guard = state.tick_lock.lock().await;
+
+    let last: Option<(String,)> =
+        sqlx::query_as("SELECT tick_at FROM watch_ticks ORDER BY tick_at DESC LIMIT 1")
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| e.to_string())?;
+
     let now = Utc::now();
+    let last_ts = last
+        .as_ref()
+        .and_then(|(s,)| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
+    let tick_at = match last_ts {
+        Some(last_ts) => {
+            let gap = (now - last_ts).num_milliseconds() as f64 / 1000.0;
+            if gap < 2.0 {
+                return Ok(());
+            } else if gap <= 3.0 {
+                last_ts + Duration::seconds(TICK_SECONDS)
+            } else {
+                now
+            }
+        }
+        None => now,
+    };
+
     sqlx::query("INSERT INTO watch_ticks (video_id, date_key, tick_at) VALUES (?, ?, ?)")
         .bind(video_id)
-        .bind(today_key())
-        .bind(now.to_rfc3339())
+        .bind(tick_at.with_timezone(&Local).format("%Y-%m-%d").to_string())
+        .bind(tick_at.to_rfc3339())
         .execute(&state.db)
         .await
         .map_err(|e| e.to_string())?;
@@ -148,6 +187,12 @@ pub async fn get_continuous_watch_seconds(
 pub struct DistributionSegment {
     pub start: String,
     pub end: String,
+    // Each tick represents a fixed TICK_SECONDS window, so a segment's real
+    // duration is tick_count * TICK_SECONDS, NOT (end - start) — the latter
+    // is short by one tick's worth of time (it only spans the gaps *between*
+    // ticks) and must match the tick-count math used by get_daily_stats /
+    // get_today_hourly_stats, or the two views of the same data disagree.
+    pub seconds: i64,
 }
 
 // Merge a day's ticks (any media type) into contiguous segments for the
@@ -178,23 +223,28 @@ pub async fn get_today_distribution(
     let mut segments: Vec<DistributionSegment> = Vec::new();
     let mut seg_start: Option<DateTime<Utc>> = None;
     let mut seg_end: Option<DateTime<Utc>> = None;
+    let mut seg_count: i64 = 0;
 
     for ts in timestamps {
         match (seg_start, seg_end) {
             (Some(_), Some(end)) if (ts - end).num_seconds() <= MERGE_GAP_SECONDS => {
                 seg_end = Some(ts);
+                seg_count += 1;
             }
             (Some(start), Some(end)) => {
                 segments.push(DistributionSegment {
                     start: start.with_timezone(&Local).to_rfc3339(),
                     end: end.with_timezone(&Local).to_rfc3339(),
+                    seconds: seg_count * TICK_SECONDS,
                 });
                 seg_start = Some(ts);
                 seg_end = Some(ts);
+                seg_count = 1;
             }
             _ => {
                 seg_start = Some(ts);
                 seg_end = Some(ts);
+                seg_count = 1;
             }
         }
     }
@@ -202,6 +252,7 @@ pub async fn get_today_distribution(
         segments.push(DistributionSegment {
             start: start.with_timezone(&Local).to_rfc3339(),
             end: end.with_timezone(&Local).to_rfc3339(),
+            seconds: seg_count * TICK_SECONDS,
         });
     }
 

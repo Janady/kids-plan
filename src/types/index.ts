@@ -69,6 +69,7 @@ export interface CleanupResult {
 export interface DistributionSegment {
   start: string;
   end: string;
+  seconds: number;
 }
 
 export interface TodayPendingItem {
