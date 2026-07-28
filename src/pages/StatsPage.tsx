@@ -12,6 +12,17 @@ function fmtDuration(s: number): string {
   return h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`;
 }
 
+function fmtHMS(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}小时`);
+  if (h > 0 || m > 0) parts.push(`${m}分`);
+  parts.push(`${s}秒`);
+  return parts.join("");
+}
+
 function fmtDate(d: Date): string {
   return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
@@ -119,11 +130,9 @@ function buildBars(dataMap: Map<string, number>, hourlyStats: number[], mode: St
   }
 
   if (mode === "week") {
-    const sunday = new Date(today);
-    sunday.setDate(today.getDate() - today.getDay());
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(sunday);
-      d.setDate(sunday.getDate() + i);
+      const d = new Date(today);
+      d.setDate(today.getDate() - 6 + i);
       const key = isoDate(d);
       const label = `${d.getMonth() + 1}/${d.getDate()}`;
       return { label, tooltip: label, seconds: dataMap.get(key) ?? 0 };
@@ -178,45 +187,41 @@ function BarChart({ bars }: { bars: ChartBar[] }) {
   );
 }
 
-// ─── Today's activity timeline ─────────────────────────────────────────────────
+// ─── Today's activity summary ─────────────────────────────────────────────────
 
-function TodayTimeline({ segments }: { segments: DistributionSegment[] }) {
-  const dayStartMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
-  const DAY_MS = 24 * 60 * 60 * 1000;
-
-  const pctOfDay = (iso: string) =>
-    Math.min(100, Math.max(0, ((new Date(iso).getTime() - dayStartMs) / DAY_MS) * 100));
-
-  const hourMarks = [0, 6, 12, 18, 24];
+function TodaySummary({ segments }: { segments: DistributionSegment[] }) {
+  const totalSeconds = segments.reduce((sum, seg) => {
+    const start = new Date(seg.start).getTime();
+    const end = new Date(seg.end).getTime();
+    return sum + Math.floor((end - start) / 1000);
+  }, 0);
 
   return (
     <div>
-      <div className="relative h-6 bg-gray-900 rounded-lg overflow-hidden">
-        {segments.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-600">
-            今天还没有观看记录
-          </div>
-        ) : (
-          segments.map((seg, i) => {
-            const left = pctOfDay(seg.start);
-            const right = pctOfDay(seg.end);
-            const width = Math.max(right - left, 0.3);
+      <div className="text-lg font-semibold text-gray-200 mb-3">
+        今日总时长 {fmtHMS(totalSeconds)}
+      </div>
+
+      {segments.length === 0 ? (
+        <div className="text-sm text-gray-500 py-2">今天还没有观看记录</div>
+      ) : (
+        <div className="max-h-64 overflow-y-auto space-y-2">
+          {segments.map((seg, i) => {
+            const start = new Date(seg.start);
+            const end = new Date(seg.end);
+            const duration = Math.floor((end.getTime() - start.getTime()) / 1000);
+            const startTime = start.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+            const endTime = end.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
             return (
-              <div
-                key={i}
-                title={`${new Date(seg.start).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} - ${new Date(seg.end).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`}
-                className="absolute top-0 h-full bg-sky-500 hover:bg-sky-400 transition-colors"
-                style={{ left: `${left}%`, width: `${width}%` }}
-              />
+              <div key={i} className="flex items-center gap-3 text-sm text-gray-300">
+                <span className="font-mono">{startTime} - {endTime}</span>
+                <span className="text-gray-500">({fmtHMS(duration)})</span>
+              </div>
             );
-          })
-        )}
-      </div>
-      <div className="flex justify-between mt-1 text-[10px] text-gray-600">
-        {hourMarks.map((h) => (
-          <span key={h}>{h}:00</span>
-        ))}
-      </div>
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -316,10 +321,10 @@ export default function StatsPage() {
         </div>
       )}
 
-      {/* Today's activity timeline */}
+      {/* Today's activity summary */}
       <section className="bg-gray-800 border border-gray-700 rounded-xl p-5 mb-6">
-        <h2 className="text-sm font-semibold text-gray-300 mb-4">今日观看时段分布</h2>
-        <TodayTimeline segments={todaySegments} />
+        <h2 className="text-sm font-semibold text-gray-300 mb-4">今日观看时段</h2>
+        <TodaySummary segments={todaySegments} />
       </section>
 
       {/* Bar chart */}
