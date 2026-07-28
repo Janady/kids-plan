@@ -11,7 +11,6 @@ export default function BackgroundAudioPage() {
   } = useAppContext();
   const [deleting, setDeleting] = useState<number | null>(null);
 
-  // Ensure the list is fresh (and sorted by play count) on mount
   useEffect(() => { bgRefreshPlans(); }, [bgRefreshPlans]);
 
   const handleDelete = async (videoId: number) => {
@@ -65,7 +64,7 @@ export default function BackgroundAudioPage() {
               <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider group-hover:text-purple-300 transition-colors">
                 🎶 {plan.name}
               </span>
-              <span className="text-[10px] text-gray-600">{plan.tracks.length} 首 · 按播放次数排序</span>
+              <span className="text-[10px] text-gray-600">{plan.tracks.length} 首</span>
               <span className="text-[10px] text-gray-700 group-hover:text-gray-500 transition-colors ml-1">→</span>
             </div>
 

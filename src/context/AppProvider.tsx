@@ -47,8 +47,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bgIsPlaying, setBgIsPlaying] = useState(false);
   const [bgLoopMode, setBgLoopMode] = useState<LoopMode>("all");
   const [bgFullscreen, setBgFullscreen] = useState(false);
-  const bgManuallyStopped = useRef(false);
-  const bgAutoStartedRef = useRef(false);
 
   // Whether a video is currently playing — drives the continuous-watch poll below.
   const isVideoPlayingRef = useRef(false);
@@ -76,16 +74,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const bgRefreshPlans = useCallback(async () => {
+    // Tracks arrive pre-sorted by plan + file order (backend ORDER BY sort_order)
     const plans = await listBackgroundAudio();
-    // Sort tracks within each plan by play count (most-played first)
-    const sorted = plans.map((p) => ({
-      ...p,
-      tracks: [...p.tracks].sort((a, b) => b.play_count_30d - a.play_count_30d),
-    }));
-    setBgAudioPlans(sorted);
+    setBgAudioPlans(plans);
     setBgCurrentPlanId((prev) => {
-      if (prev !== null && sorted.some((p) => p.id === prev)) return prev;
-      return sorted.length > 0 ? sorted[0].id : null;
+      if (prev !== null && plans.some((p) => p.id === prev)) return prev;
+      return plans.length > 0 ? plans[0].id : null;
     });
   }, []);
 
@@ -106,25 +100,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshTodayTotal();
     bgRefreshPlans();
   }, [refreshTodayTotal, bgRefreshPlans]);
-
-  // Auto-start background audio whenever a lock overlay appears (forced break,
-  // bedtime, or daily limit). The user can still pause/adjust manually.
-  useEffect(() => {
-    const overlayShown =
-      isBreakRequired || isBedtime || todayWatchedSeconds >= dailyLimitSeconds;
-    // Auto-start once each time an overlay appears. We intentionally ignore the
-    // manual-stop flag here so a break/bedtime always starts music, even if audio
-    // was stopped on the video page moments earlier. bgAutoStartedRef prevents
-    // re-triggering (so a manual pause during the overlay is respected).
-    if (overlayShown && !bgAutoStartedRef.current && bgAudioPlans.length > 0) {
-      bgAutoStartedRef.current = true;
-      bgManuallyStopped.current = false;
-      setBgIsPlaying(true);
-    }
-    if (!overlayShown) {
-      bgAutoStartedRef.current = false;
-    }
-  }, [isBreakRequired, isBedtime, todayWatchedSeconds, dailyLimitSeconds, bgAudioPlans.length]);
 
   const setDailyLimit = useCallback(async (seconds: number) => {
     await setSetting("daily_limit_seconds", String(seconds));
@@ -222,32 +197,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [bgAudioPlans, bgScopePlanId]);
 
   const bgTogglePlay = useCallback(() => {
-    setBgIsPlaying((prev) => {
-      const next = !prev;
-      bgManuallyStopped.current = !next;
-      return next;
-    });
+    setBgIsPlaying((prev) => !prev);
   }, []);
 
-  // Stop background playback (e.g. when entering the video player). Marked as a
-  // manual stop so the overlay auto-start won't immediately resume it.
+  // Stop background playback (e.g. when entering the video player).
   const bgStop = useCallback(() => {
     setBgIsPlaying(false);
-    bgManuallyStopped.current = true;
   }, []);
 
   const bgSetPlan = useCallback((planId: number) => {
     setBgCurrentPlanId(planId);
     setBgCurrentTrackIdx(0);
     setBgIsPlaying(true);
-    bgManuallyStopped.current = false;
   }, []);
 
   const bgSetTrack = useCallback((planId: number, idx: number) => {
     setBgCurrentPlanId(planId);
     setBgCurrentTrackIdx(idx);
     setBgIsPlaying(true);
-    bgManuallyStopped.current = false;
   }, []);
 
   // Lock playback to a single plan (and start it), or null for all plans.
@@ -261,7 +228,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setBgCurrentPlanId(planId);
         setBgCurrentTrackIdx(0);
         setBgIsPlaying(true);
-        bgManuallyStopped.current = false;
       }
     }
   }, [bgAudioPlans]);
