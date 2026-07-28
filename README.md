@@ -51,6 +51,15 @@ bun run transcode "D:\path\to\folder"
 bun run transcode "D:\path\to\folder" --replace
 ```
 
+```shell
+# 只检测，列出需要转码的文件，不改动
+bun run audio "D:\path\to\folder" --check
+
+bun run audio "D:\path\to\folder"
+
+bun run audio "D:\path\to\folder" --out "D:\out"
+```
+
 脚本只会转码 WebView 无法显示的视频（H.264 等兼容文件跳过），
 音频重编码为 AAC，输出带 `+faststart` 便于边下边播。
 转码完成后，在 app 里对相应计划点「重新扫描」即可。
