@@ -1,8 +1,9 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
 // A stalled socket op must not hang forever. When the WebView abandons a stream
@@ -12,6 +13,13 @@ use tokio::time::timeout;
 // and thumbnails can't load until the app restarts.
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+// Hard cap on concurrently open connections (each holds a socket + possibly a
+// file handle). Bounds worst-case fd usage regardless of how many thumbnails /
+// players / retries pile up, instead of letting it grow unbounded until the OS
+// fd limit is hit — which is what previously required an app restart to recover
+// from. Comfortably above the ~6-per-origin the WebView opens on its own.
+const MAX_CONNECTIONS: usize = 24;
 
 static PORT: OnceLock<u16> = OnceLock::new();
 
@@ -26,13 +34,32 @@ pub async fn start() -> u16 {
     let port = listener.local_addr().unwrap().port();
     PORT.set(port).ok();
 
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+
     tokio::spawn(async move {
         loop {
-            if let Ok((socket, _)) = listener.accept().await {
-                // Disable Nagle's algorithm: send media bytes immediately instead of
-                // batching them, which removes periodic latency spikes during playback.
-                let _ = socket.set_nodelay(true);
-                tokio::spawn(handle(socket));
+            match listener.accept().await {
+                Ok((socket, _)) => {
+                    // Disable Nagle's algorithm: send media bytes immediately instead of
+                    // batching them, which removes periodic latency spikes during playback.
+                    let _ = socket.set_nodelay(true);
+                    let permits = connections.clone();
+                    tokio::spawn(async move {
+                        // Hold the permit for the connection's whole lifetime (all
+                        // keep-alive requests on it), not just one request.
+                        let _permit = permits.acquire().await;
+                        handle(socket).await;
+                    });
+                }
+                Err(e) => {
+                    // Without a backoff, a persistent accept error (e.g. the OS fd
+                    // limit being hit) turns this into a tight spin loop that pins a
+                    // runtime thread at 100% CPU and can't recover even after fds
+                    // free up. A short sleep lets the runtime breathe and gives
+                    // in-flight connections a chance to close.
+                    eprintln!("[video_server] accept error: {e}");
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
             }
         }
     });
@@ -40,77 +67,100 @@ pub async fn start() -> u16 {
     port
 }
 
+// Serves requests from one connection in a loop (HTTP/1.1 keep-alive) instead of
+// closing after a single response. Video playback issues many sequential Range
+// requests per file (initial load, seeks, buffering) — without keep-alive each
+// one pays a fresh TCP handshake and fd allocation, which is the connection
+// churn that was exhausting file descriptors under load.
 async fn handle(mut socket: tokio::net::TcpStream) {
-    // Read request headers (max 8 KiB), bounded by a timeout to avoid slow/stuck
-    // connections holding the task open forever.
-    let mut buf = vec![0u8; 8192];
-    let n = match timeout(READ_TIMEOUT, socket.read(&mut buf)).await {
-        Ok(Ok(n)) if n > 0 => n,
-        _ => return,
-    };
-    let request = match std::str::from_utf8(&buf[..n]) {
-        Ok(s) => s.to_string(),
-        Err(_) => return,
-    };
+    loop {
+        // Read request headers (max 8 KiB), bounded by a timeout to avoid slow/stuck
+        // connections holding the task open forever. Also serves as the idle
+        // keep-alive timeout between requests on the same connection.
+        let mut buf = vec![0u8; 8192];
+        let n = match timeout(READ_TIMEOUT, socket.read(&mut buf)).await {
+            Ok(Ok(n)) if n > 0 => n,
+            _ => return,
+        };
+        let request = match std::str::from_utf8(&buf[..n]) {
+            Ok(s) => s.to_string(),
+            Err(_) => return,
+        };
 
-    let first_line = request.lines().next().unwrap_or("");
+        let first_line = request.lines().next().unwrap_or("");
 
-    // OPTIONS preflight
-    if first_line.starts_with("OPTIONS") {
-        socket
-            .write_all(
-                b"HTTP/1.1 200 OK\r\n\
-                  Access-Control-Allow-Origin: *\r\n\
-                  Access-Control-Allow-Methods: GET, HEAD\r\n\
-                  Content-Length: 0\r\n\r\n",
-            )
-            .await
-            .ok();
-        return;
-    }
-
-    // Parse request line: GET /?path=<encoded-abs-path> HTTP/1.1
-    let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
-    if parts.len() < 2 {
-        return;
-    }
-    let raw_url = parts[1]; // e.g. "/ping"  or  "/?path=%2F..."
-
-    // /ping — connectivity test
-    if raw_url == "/ping" || raw_url.starts_with("/ping?") {
-        socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nAccess-Control-Allow-Origin: *\r\n\r\npong")
-            .await
-            .ok();
-        return;
-    }
-
-    let file_path = match extract_path_param(raw_url) {
-        Some(p) => p,
-        None => {
-            socket
-                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+        // OPTIONS preflight
+        if first_line.starts_with("OPTIONS") {
+            if socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Access-Control-Allow-Origin: *\r\n\
+                      Access-Control-Allow-Methods: GET, HEAD\r\n\
+                      Content-Length: 0\r\n\r\n",
+                )
                 .await
-                .ok();
+                .is_err()
+            {
+                return;
+            }
+            continue;
+        }
+
+        // Parse request line: GET /?path=<encoded-abs-path> HTTP/1.1
+        let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
+        if parts.len() < 2 {
             return;
         }
-    };
+        let raw_url = parts[1]; // e.g. "/ping"  or  "/?path=%2F..."
 
-    // Parse optional Range header
-    let range = request
-        .lines()
-        .find(|l| l.to_ascii_lowercase().starts_with("range:"))
-        .and_then(|l| parse_range(&l[6..]));
+        // /ping — connectivity test
+        if raw_url == "/ping" || raw_url.starts_with("/ping?") {
+            if socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nAccess-Control-Allow-Origin: *\r\n\r\npong")
+                .await
+                .is_err()
+            {
+                return;
+            }
+            continue;
+        }
 
-    eprintln!("[video_server] file={file_path:?} range={range:?}");
-    serve_file(&mut socket, &file_path, range).await;
+        let file_path = match extract_path_param(raw_url) {
+            Some(p) => p,
+            None => {
+                if socket
+                    .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                continue;
+            }
+        };
+
+        // Parse optional Range header
+        let range = request
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("range:"))
+            .and_then(|l| parse_range(&l[6..]));
+
+        eprintln!("[video_server] file={file_path:?} range={range:?}");
+        if !serve_file(&mut socket, &file_path, range).await {
+            return;
+        }
+        // else: response completed successfully, loop to read the next
+        // request on this same connection.
+    }
 }
 
+// Returns true if the connection can be reused for another request
+// (keep-alive), false if it should be closed.
 async fn serve_file(
     socket: &mut tokio::net::TcpStream,
     path: &str,
     range: Option<(u64, u64)>,
-) {
+) -> bool {
     let mut file = match File::open(path).await {
         Ok(f) => f,
         Err(e) => {
@@ -119,21 +169,19 @@ async fn serve_file(
             } else {
                 "403 Forbidden"
             };
-            let _ = socket
-                .write_all(
-                    format!("HTTP/1.1 {code}\r\nContent-Length: 0\r\n\r\n").as_bytes(),
-                )
-                .await;
-            return;
+            return socket
+                .write_all(format!("HTTP/1.1 {code}\r\nContent-Length: 0\r\n\r\n").as_bytes())
+                .await
+                .is_ok();
         }
     };
 
     let file_size = match file.metadata().await {
         Ok(m) => m.len(),
-        Err(_) => return,
+        Err(_) => return false,
     };
     if file_size == 0 {
-        return;
+        return false;
     }
 
     let mime = guess_mime(path);
@@ -142,10 +190,10 @@ async fn serve_file(
         Some((s, e)) => {
             let e = e.min(file_size - 1);
             if s > e {
-                let _ = socket
+                return socket
                     .write_all(b"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\n\r\n")
-                    .await;
-                return;
+                    .await
+                    .is_ok();
             }
             (s, e, true)
         }
@@ -160,7 +208,7 @@ async fn serve_file(
         .await
         .is_err()
     {
-        return;
+        return false;
     }
 
     // Write response header
@@ -190,7 +238,7 @@ async fn serve_file(
         timeout(WRITE_TIMEOUT, socket.write_all(header.as_bytes())).await,
         Ok(Ok(()))
     ) {
-        return;
+        return false;
     }
 
     // Stream with a large read-ahead buffer. Reading ~1 MiB per disk op (vs many
@@ -212,13 +260,14 @@ async fn serve_file(
                     timeout(WRITE_TIMEOUT, socket.write_all(&chunk[..n])).await,
                     Ok(Ok(()))
                 ) {
-                    break;
+                    return false;
                 }
                 remaining -= n as u64;
             }
-            Err(_) => break,
+            Err(_) => return false,
         }
     }
+    remaining == 0
 }
 
 // URL: "/?path=%2Fstorage%2Femulated%2F0%2Fvideo.mp4"  →  "/storage/emulated/0/video.mp4"

@@ -89,14 +89,41 @@ export default function PlayerPage() {
   // Also cancel any pending connection-retry reload — resuming the media resource
   // there would trigger the element's autoplay attribute and silently resume
   // playback (and tick recording) underneath the overlay.
+  // Stop the tick session directly rather than waiting for the element's 'pause'
+  // event to bubble to handlePause — if that event is delayed (or never fires
+  // because the component unmounts first), the tick interval keeps running and
+  // silently records watch time through the entire break.
   useEffect(() => {
     if (isBreakRequired || isBedtime || isLimitExceeded) {
       const el = mediaRef.current;
       if (el && !el.paused) el.pause();
       if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
       setIsFullscreen(false);
+      if (!isAudio) notifyVideoPause();
+      if (!isParentMode) pauseSession();
     }
-  }, [isBreakRequired, isBedtime, isLimitExceeded]);
+  }, [isBreakRequired, isBedtime, isLimitExceeded, isAudio, isParentMode, notifyVideoPause, pauseSession]);
+
+  // Screen off / app backgrounded (Android lock button, home button, screen
+  // timeout) doesn't reliably pause the underlying <video> element on every
+  // WebView/device combo — some keep decoding in the background, which would
+  // leave the tick interval running and silently count locked-screen time as
+  // watch time. Stop the session directly on visibilitychange rather than
+  // relying on a 'pause' event that may never fire.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") return;
+      const el = mediaRef.current;
+      if (el && !el.paused) el.pause();
+      if (!isAudio) notifyVideoPause();
+      if (!isParentMode) {
+        pauseSession();
+        if (el) updateVideoProgress(vId, Math.floor(el.currentTime));
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [isAudio, isParentMode, notifyVideoPause, pauseSession, vId]);
 
   useEffect(() => {
     setLoading(true);
@@ -214,11 +241,15 @@ export default function PlayerPage() {
   // Leaving this src attached after navigating away can hold one of the
   // local video server's scarce per-origin connection slots for up to the
   // server's abandoned-stream timeout, starving thumbnails on the home page.
+  // pauseSession() runs unconditionally (not just when el.paused is false):
+  // the tick interval can outlive an imperative el.pause() call (e.g. from the
+  // break/bedtime effect above) if the 'pause' DOM event hasn't fired yet, so
+  // checking el.paused here would leave that interval running after unmount.
   useEffect(() => {
     return () => {
       const el = mediaRef.current;
+      pauseSession();
       if (el && !el.paused && !el.ended) {
-        pauseSession();
         updateVideoProgress(vId, Math.floor(el.currentTime));
       }
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
