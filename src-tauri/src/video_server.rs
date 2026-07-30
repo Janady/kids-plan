@@ -14,12 +14,30 @@ use tokio::time::timeout;
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
+// Same idea, but for disk I/O rather than socket I/O. Android media files live
+// on external/removable storage (`/storage/emulated/0/...`), which can stall
+// for reasons that have nothing to do with the network side — a MediaProvider
+// scan, an SD card waking from sleep, a transient "storage not available"
+// blip. Without a timeout here, a single stalled read holds its connection's
+// semaphore permit forever (see MAX_CONNECTIONS below); enough of those over a
+// long session exhaust the permit pool and every future request — including
+// brand new ones — hangs waiting for a permit that will never free, with no
+// error ever surfacing for the frontend's retry logic to react to.
+const FILE_IO_TIMEOUT: Duration = Duration::from_secs(15);
+
 // Hard cap on concurrently open connections (each holds a socket + possibly a
 // file handle). Bounds worst-case fd usage regardless of how many thumbnails /
 // players / retries pile up, instead of letting it grow unbounded until the OS
 // fd limit is hit — which is what previously required an app restart to recover
 // from. Comfortably above the ~6-per-origin the WebView opens on its own.
 const MAX_CONNECTIONS: usize = 24;
+
+// How long a new connection will wait for a free permit before giving up.
+// Bounds worst-case wait to something well under the frontend's retry-window
+// so a saturated (or wedged) pool fails fast with a real HTTP error instead of
+// hanging indefinitely — turning a silent stuck-loading-spinner into something
+// the existing onError-driven retry logic can actually recover from.
+const PERMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 static PORT: OnceLock<u16> = OnceLock::new();
 
@@ -46,8 +64,20 @@ pub async fn start() -> u16 {
                     let permits = connections.clone();
                     tokio::spawn(async move {
                         // Hold the permit for the connection's whole lifetime (all
-                        // keep-alive requests on it), not just one request.
-                        let _permit = permits.acquire().await;
+                        // keep-alive requests on it), not just one request. Bounded
+                        // by PERMIT_WAIT_TIMEOUT so a saturated (or wedged) pool
+                        // fails this connection with a real response instead of
+                        // hanging it forever.
+                        let mut socket = socket;
+                        let _permit = match timeout(PERMIT_WAIT_TIMEOUT, permits.acquire()).await {
+                            Ok(p) => p,
+                            Err(_) => {
+                                let _ = socket
+                                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                                    .await;
+                                return;
+                            }
+                        };
                         handle(socket).await;
                     });
                 }
@@ -161,9 +191,9 @@ async fn serve_file(
     path: &str,
     range: Option<(u64, u64)>,
 ) -> bool {
-    let mut file = match File::open(path).await {
-        Ok(f) => f,
-        Err(e) => {
+    let mut file = match timeout(FILE_IO_TIMEOUT, File::open(path)).await {
+        Ok(Ok(f)) => f,
+        Ok(Err(e)) => {
             let code = if e.kind() == std::io::ErrorKind::NotFound {
                 "404 Not Found"
             } else {
@@ -174,11 +204,19 @@ async fn serve_file(
                 .await
                 .is_ok();
         }
+        // Storage stalled (e.g. SD card / external storage hiccup) rather than
+        // erroring — respond instead of holding the connection's permit forever.
+        Err(_) => {
+            return socket
+                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .is_ok();
+        }
     };
 
-    let file_size = match file.metadata().await {
-        Ok(m) => m.len(),
-        Err(_) => return false,
+    let file_size = match timeout(FILE_IO_TIMEOUT, file.metadata()).await {
+        Ok(Ok(m)) => m.len(),
+        _ => return false,
     };
     if file_size == 0 {
         return false;
@@ -203,11 +241,10 @@ async fn serve_file(
     let content_length = end - start + 1;
 
     // Seek to start
-    if file
-        .seek(std::io::SeekFrom::Start(start))
-        .await
-        .is_err()
-    {
+    if !matches!(
+        timeout(FILE_IO_TIMEOUT, file.seek(std::io::SeekFrom::Start(start))).await,
+        Ok(Ok(_))
+    ) {
         return false;
     }
 
@@ -250,9 +287,12 @@ async fn serve_file(
     let mut chunk = vec![0u8; 262_144];
     while remaining > 0 {
         let to_read = (remaining as usize).min(chunk.len());
-        match reader.read(&mut chunk[..to_read]).await {
-            Ok(0) => break,
-            Ok(n) => {
+        // Bounded read: a stalled disk (SD card / external storage hiccup)
+        // must not hold this connection's semaphore permit forever — see
+        // FILE_IO_TIMEOUT.
+        match timeout(FILE_IO_TIMEOUT, reader.read(&mut chunk[..to_read])).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
                 // Bounded write: if the client stops reading (abandoned stream),
                 // this times out instead of blocking forever — freeing the socket
                 // and file handle so they don't accumulate.
@@ -264,7 +304,7 @@ async fn serve_file(
                 }
                 remaining -= n as u64;
             }
-            Err(_) => return false,
+            _ => return false,
         }
     }
     remaining == 0
