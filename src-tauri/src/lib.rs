@@ -1,9 +1,11 @@
 mod commands;
 mod db;
+mod thumbnail_cache;
 mod video_server;
 
 use commands::{plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
 use db::AppState;
+use thumbnail_cache::{cache_thumbnail, get_cached_thumbnail};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
 use std::str::FromStr;
@@ -97,6 +99,8 @@ pub fn run() {
             check_storage_accessible,
             list_dir,
             get_video_server_port,
+            get_cached_thumbnail,
+            cache_thumbnail,
             get_setting,
             set_setting,
             add_plan,

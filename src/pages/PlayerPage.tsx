@@ -24,6 +24,22 @@ function formatTime(s: number): string {
 // error state forever, requiring an app restart to recover.
 const PLAYER_RETRY_DELAYS = [800, 1600, 3200, 6000];
 
+// A request can also hang instead of failing outright — e.g. queued behind a
+// saturated connection pool with no response yet, or a wedged connection —
+// in which case the media element never fires 'error' and PLAYER_RETRY_DELAYS
+// above never kicks in; playback just spins forever until the user navigates
+// away and back (which force-aborts the pending request via removeAttribute
+// + load() in the unmount cleanup below, then a fresh mount tries again).
+// This watchdog is a time-based backstop for that case: if metadata hasn't
+// arrived within the window below, treat it as failed and retry exactly like
+// a real error would. Human patience for "did my tap register" is on the
+// order of a second or two, not the 10-15s the server-side timeouts allow —
+// so the first check is fast (most stalls are freed almost immediately once
+// detected); later attempts widen the window a bit so a load that's merely
+// slow (not stuck — e.g. a genuinely cold SD card) gets more benefit of the
+// doubt once the earlier attempt has already "warmed up" the disk/connection.
+const STALL_TIMEOUTS = [2000, 3000, 5000, 8000];
+
 export default function PlayerPage() {
   const { planId, videoId } = useParams<{ planId: string; videoId: string }>();
   const navigate = useNavigate();
@@ -52,6 +68,7 @@ export default function PlayerPage() {
   const resumeShownRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { startSession, pauseSession, endSession } = useWatchSession(vId);
 
@@ -98,6 +115,7 @@ export default function PlayerPage() {
       const el = mediaRef.current;
       if (el && !el.paused) el.pause();
       if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+      if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
       setIsFullscreen(false);
       if (!isAudio) notifyVideoPause();
       if (!isParentMode) pauseSession();
@@ -135,6 +153,7 @@ export default function PlayerPage() {
     setDuration(0);
     retryCountRef.current = 0;
     if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
 
     Promise.all([listVideosForPlan(pId), listPlans()]).then(([videos, plans]) => {
       const found = videos.find((v) => v.id === vId) ?? null;
@@ -144,16 +163,44 @@ export default function PlayerPage() {
     });
   }, [pId, vId]);
 
-  const handleMediaError = useCallback(() => {
+  // Schedules the next retry attempt (real error or stall-watchdog timeout).
+  // Re-arms the watchdog around the retried load so a repeatedly-hanging
+  // connection keeps getting recovered rather than only being caught once.
+  const scheduleRetry = useCallback(() => {
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
     if (retryCountRef.current >= PLAYER_RETRY_DELAYS.length) return;
     const delay = PLAYER_RETRY_DELAYS[retryCountRef.current];
     retryCountRef.current += 1;
-    retryTimerRef.current = setTimeout(() => { mediaRef.current?.load(); }, delay);
+    retryTimerRef.current = setTimeout(() => {
+      mediaRef.current?.load();
+      armStallWatchdog();
+    }, delay);
   }, []);
+
+  const armStallWatchdog = useCallback(() => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    const timeout = STALL_TIMEOUTS[Math.min(retryCountRef.current, STALL_TIMEOUTS.length - 1)];
+    stallTimerRef.current = setTimeout(() => { scheduleRetry(); }, timeout);
+  }, []);
+
+  const handleMediaError = scheduleRetry;
+
+  // Arm the watchdog for the initial load attempt as soon as this video is
+  // ready to render (autoPlay kicks off the actual network request).
+  useEffect(() => {
+    if (!video) return;
+    armStallWatchdog();
+    return () => { if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; } };
+  }, [video?.id, armStallWatchdog]);
 
   const handleLoadedMetadata = useCallback(async () => {
     const el = mediaRef.current;
     if (!el || !video) return;
+
+    // Metadata arrived, so this load attempt succeeded — the stall watchdog
+    // no longer applies until the next load (retry or new video).
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
 
     const dur = (el as HTMLVideoElement).duration;
     if (isFinite(dur)) setDuration(Math.floor(dur));
@@ -253,6 +300,7 @@ export default function PlayerPage() {
         updateVideoProgress(vId, Math.floor(el.currentTime));
       }
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
       if (el) { el.pause(); el.removeAttribute("src"); el.load(); }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

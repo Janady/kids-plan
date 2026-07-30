@@ -6,6 +6,7 @@ import { addPlan, listPlans } from "../api/plans";
 import { markVideoWatchedEarlier } from "../api/videos";
 import { getSetting } from "../api/settings";
 import { getVideoUrl } from "../api/videoSrc";
+import { getCachedThumbnail, cacheThumbnail } from "../api/thumbnails";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
 import { FolderPickerModal } from "../components/FolderPickerModal";
@@ -29,15 +30,34 @@ function formatSeconds(s: number): string {
 // ─── Lazy video thumbnail ─────────────────────────────────────────────────────
 // Only creates the <video> element when the card scrolls into view.
 // Clears src on unmount so Chromium releases the buffered media data.
+//
+// Every re-mount used to re-fetch the video over the (Android-only) local
+// HTTP server just to grab one preview frame — with rootMargin pulling most
+// cards into view at once, repeatedly navigating home rapidly saturates that
+// server's small connection budget. So before touching the video at all, we
+// check a Rust-side in-memory cache (keyed by file path) over plain Tauri IPC;
+// a hit renders an <img> with zero network involvement. On a miss we decode
+// exactly as before, then opportunistically snapshot the frame into that
+// cache for next time — best-effort, so if it ever fails the thumbnail still
+// renders exactly as it always has.
 
 const THUMB_RETRY_DELAYS = [1000, 2000, 4000, 8000];
+const THUMB_MAX_WIDTH = 320;
+// Same time-based backstop as PlayerPage: a hung (not failed) request never
+// fires 'error', so THUMB_RETRY_DELAYS alone can leave a card stuck loading
+// forever. See PlayerPage.tsx's STALL_TIMEOUTS for the full rationale.
+const THUMB_STALL_TIMEOUTS = [2000, 3000, 5000, 8000];
 
 function LazyVideoThumb({ filePath }: { filePath: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [inView, setInView] = useState(false);
+  const [cacheChecked, setCacheChecked] = useState(false);
+  const [cachedUrl, setCachedUrl] = useState<string | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capturedRef = useRef(false);
 
   // Start observing once; disconnect after first intersection (stay loaded)
   useEffect(() => {
@@ -51,14 +71,46 @@ function LazyVideoThumb({ filePath }: { filePath: string }) {
     return () => obs.disconnect();
   }, []);
 
+  // Check the Rust-side cache before ever creating a <video> element.
+  useEffect(() => {
+    if (!inView) return;
+    let cancelled = false;
+    getCachedThumbnail(filePath)
+      .then((url) => { if (!cancelled) setCachedUrl(url); })
+      .catch(() => { if (!cancelled) setCachedUrl(null); })
+      .finally(() => { if (!cancelled) setCacheChecked(true); });
+    return () => { cancelled = true; };
+  }, [inView, filePath]);
+
   // Critical: release buffered video data when the card unmounts
   useEffect(() => {
     return () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
       const v = videoRef.current;
       if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
     };
   }, []);
+
+  // Arm the stall watchdog once a fresh load actually starts (initial mount
+  // on cache miss, and again after each retry below, and again around the
+  // post-metadata seek — each of those is its own network request that can
+  // hang instead of failing).
+  const armStallWatchdog = () => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    const timeout = THUMB_STALL_TIMEOUTS[Math.min(retryCountRef.current, THUMB_STALL_TIMEOUTS.length - 1)];
+    stallTimerRef.current = setTimeout(() => { handleError(); }, timeout);
+  };
+
+  // Guards the initial connect + metadata fetch as soon as the <video>
+  // element mounts with a src (cache miss). Re-armed for the seek in
+  // onLoadedMetadata below and for each retry inside handleError.
+  useEffect(() => {
+    if (!inView || !cacheChecked || cachedUrl) return;
+    armStallWatchdog();
+    return () => { if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inView, cacheChecked, cachedUrl, filePath]);
 
   // The local video server has a small shared per-origin connection budget
   // (browsers cap ~6 concurrent HTTP/1.1 connections per host:port), so a
@@ -66,27 +118,72 @@ function LazyVideoThumb({ filePath }: { filePath: string }) {
   // active player are using it. <video> doesn't retry network errors on its
   // own, so without this the card stays broken even once a slot frees up.
   const handleError = () => {
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
     if (retryCountRef.current >= THUMB_RETRY_DELAYS.length) return;
     const delay = THUMB_RETRY_DELAYS[retryCountRef.current];
     retryCountRef.current += 1;
-    retryTimerRef.current = setTimeout(() => { videoRef.current?.load(); }, delay);
+    retryTimerRef.current = setTimeout(() => {
+      videoRef.current?.load();
+      armStallWatchdog();
+    }, delay);
   };
+
+  // Fires once the seeked-to frame is actually decoded and ready. Snapshot it
+  // into the shared thumbnail cache so future mounts skip the video server
+  // entirely for this file.
+  const handleSeeked = () => {
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
+    if (capturedRef.current) return;
+    const v = videoRef.current;
+    if (!v || v.videoWidth === 0) return;
+    capturedRef.current = true;
+    try {
+      const scale = Math.min(1, THUMB_MAX_WIDTH / v.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(v.videoWidth * scale);
+      canvas.height = Math.round(v.videoHeight * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
+      cacheThumbnail(filePath, dataUrl).catch(() => {});
+    } catch {
+      // Tainted canvas or transient decode failure — the <video> thumbnail
+      // still renders normally, we just skip caching this one.
+    }
+  };
+
+  if (inView && cacheChecked && cachedUrl) {
+    return (
+      <div ref={wrapRef} className="absolute inset-0 bg-gray-900">
+        <img
+          src={cachedUrl}
+          className="w-full h-full object-cover"
+          style={{ pointerEvents: "none" }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div ref={wrapRef} className="absolute inset-0 bg-gray-900">
-      {inView && (
+      {inView && cacheChecked && (
         <video
           ref={videoRef}
           src={getVideoUrl(filePath)}
+          crossOrigin="anonymous"
           preload="metadata"
           muted
           playsInline
           className="w-full h-full object-cover"
           style={{ pointerEvents: "none" }}
           onLoadedMetadata={(e) => {
+            armStallWatchdog();
             const el = e.currentTarget;
             el.currentTime = Math.min(3, (el.duration || 3) * 0.15);
           }}
+          onSeeked={handleSeeked}
           onError={handleError}
         />
       )}
