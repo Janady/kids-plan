@@ -179,6 +179,7 @@ export interface CastStateSnapshot {
   current: CastQueueItem | null;
   index: number;
   total: number;
+  queue: CastQueueItem[];
   transport_state: TransportState;
   is_paused_by_break: boolean;
   phase: CastPhase;

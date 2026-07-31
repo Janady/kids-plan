@@ -9,6 +9,7 @@ use super::device::RendererDevice;
 use super::lan_server;
 use super::CastState;
 use crate::commands::sessions::record_watch_tick;
+use crate::commands::videos::update_video_status;
 use crate::db::AppState;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -40,6 +41,7 @@ pub struct CastStateSnapshot {
     pub current: Option<CastQueueItem>,
     pub index: usize,
     pub total: usize,
+    pub queue: Vec<CastQueueItem>,
     pub transport_state: TransportState,
     pub is_paused_by_break: bool,
     pub phase: CastPhase,
@@ -50,6 +52,7 @@ pub enum CastControl {
     Pause,
     Resume,
     Stop,
+    JumpTo(usize),
 }
 
 pub type SharedSnapshot = Arc<StdMutex<Option<CastStateSnapshot>>>;
@@ -97,7 +100,7 @@ pub async fn run(
             publish(
                 &app,
                 &snapshot,
-                error_snapshot(&renderer_name, total, format!("局域网服务启动失败: {e}")),
+                error_snapshot(&renderer_name, total, queue.clone(), format!("局域网服务启动失败: {e}")),
             );
             clear_session(&app).await;
             return;
@@ -105,7 +108,9 @@ pub async fn run(
     };
     let lan_ip = lan_server::local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
 
-    'queue: for (index, item) in queue.into_iter().enumerate() {
+    let mut index = 0usize;
+    'queue: while index < queue.len() {
+        let item = queue[index].clone();
         let media_url = format!(
             "http://{lan_ip}:{lan_port}/?path={}",
             url_encode(&item.file_path)
@@ -119,6 +124,7 @@ pub async fn run(
                 current: Some(item.clone()),
                 index,
                 total,
+                queue: queue.clone(),
                 transport_state: TransportState::Unknown,
                 is_paused_by_break: false,
                 phase: CastPhase::Loading,
@@ -127,16 +133,21 @@ pub async fn run(
         );
 
         if let Err(e) = avtransport::set_av_transport_uri(&device, &media_url).await {
-            publish(&app, &snapshot, error_snapshot(&renderer_name, total, e));
+            publish(&app, &snapshot, error_snapshot(&renderer_name, total, queue.clone(), e));
             break;
         }
         if let Err(e) = avtransport::play(&device).await {
-            publish(&app, &snapshot, error_snapshot(&renderer_name, total, e));
+            publish(&app, &snapshot, error_snapshot(&renderer_name, total, queue.clone(), e));
             break;
         }
 
         let mut paused_by_break = false;
         let mut consecutive_failures: u32 = 0;
+        // Only treat a Stopped/NoMediaPresent report as "this item finished" once
+        // we've actually observed it playing — otherwise a renderer that's slow to
+        // load/buffer the new URI (and briefly reports one of these states right
+        // after Play()) would cause an immediate, incorrect skip to the next item.
+        let mut has_started = false;
 
         loop {
             tokio::select! {
@@ -149,6 +160,7 @@ pub async fn run(
                                 renderer_name: renderer_name.clone(),
                                 current: Some(item.clone()),
                                 index, total,
+                                queue: queue.clone(),
                                 transport_state: TransportState::Paused,
                                 is_paused_by_break: true,
                                 phase: CastPhase::Paused,
@@ -159,12 +171,20 @@ pub async fn run(
                             let _ = avtransport::play(&device).await;
                             paused_by_break = false;
                         }
+                        Some(CastControl::JumpTo(target)) => {
+                            if target < queue.len() && target != index {
+                                let _ = avtransport::stop(&device).await;
+                                index = target;
+                                continue 'queue;
+                            }
+                        }
                         Some(CastControl::Stop) | None => {
                             let _ = avtransport::stop(&device).await;
                             lan_task.abort();
                             publish(&app, &snapshot, CastStateSnapshot {
                                 renderer_name: renderer_name.clone(),
                                 current: None, index, total,
+                                queue: queue.clone(),
                                 transport_state: TransportState::Stopped,
                                 is_paused_by_break: false,
                                 phase: CastPhase::Stopped,
@@ -177,12 +197,16 @@ pub async fn run(
                 }
                 _ = tokio::time::sleep(POLL_INTERVAL), if !paused_by_break => {
                     match avtransport::get_transport_info(&device).await {
-                        Ok(TransportState::Stopped) => {
+                        Ok(TransportState::Stopped) | Ok(TransportState::NoMediaPresent) if has_started => {
+                            let app_state = app.state::<AppState>();
+                            let _ = update_video_status(app_state, item.video_id, "watched".to_string()).await;
+                            index += 1;
                             continue 'queue;
                         }
                         Ok(state) => {
                             consecutive_failures = 0;
                             if state == TransportState::Playing {
+                                has_started = true;
                                 let app_state = app.state::<AppState>();
                                 let _ = record_watch_tick(app_state, item.video_id).await;
                             }
@@ -190,6 +214,7 @@ pub async fn run(
                                 renderer_name: renderer_name.clone(),
                                 current: Some(item.clone()),
                                 index, total,
+                                queue: queue.clone(),
                                 transport_state: state,
                                 is_paused_by_break: false,
                                 phase: CastPhase::Playing,
@@ -199,7 +224,7 @@ pub async fn run(
                         Err(_) => {
                             consecutive_failures += 1;
                             if consecutive_failures >= MAX_CONSECUTIVE_POLL_FAILURES {
-                                publish(&app, &snapshot, error_snapshot(&renderer_name, total, "设备无响应,已停止投屏".to_string()));
+                                publish(&app, &snapshot, error_snapshot(&renderer_name, total, queue.clone(), "设备无响应,已停止投屏".to_string()));
                                 lan_task.abort();
                                 clear_session(&app).await;
                                 return;
@@ -220,6 +245,7 @@ pub async fn run(
             current: None,
             index: total,
             total,
+            queue,
             transport_state: TransportState::Stopped,
             is_paused_by_break: false,
             phase: CastPhase::Finished,
@@ -229,12 +255,13 @@ pub async fn run(
     clear_session(&app).await;
 }
 
-fn error_snapshot(renderer_name: &str, total: usize, error: String) -> CastStateSnapshot {
+fn error_snapshot(renderer_name: &str, total: usize, queue: Vec<CastQueueItem>, error: String) -> CastStateSnapshot {
     CastStateSnapshot {
         renderer_name: renderer_name.to_string(),
         current: None,
         index: 0,
         total,
+        queue,
         transport_state: TransportState::Unknown,
         is_paused_by_break: false,
         phase: CastPhase::Error,

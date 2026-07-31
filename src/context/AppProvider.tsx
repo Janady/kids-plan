@@ -20,6 +20,11 @@ function isInBlockedRange(start: string, end: string): boolean {
   return s <= e ? cur >= s && cur < e : cur >= s || cur < e;
 }
 
+function todayDateKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [dailyLimitSeconds, setDailyLimitSeconds] = useState(DEFAULT_DAILY_LIMIT);
   const [todayWatchedSeconds, setTodayWatchedSeconds] = useState(0);
@@ -38,6 +43,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isParentMode, setIsParentMode] = useState(
     () => localStorage.getItem("parentMode") === "true"
   );
+  const [skipDailyLimitDate, setSkipDailyLimitDate] = useState<string | null>(null);
+  const [skipContinuousLimitDate, setSkipContinuousLimitDate] = useState<string | null>(null);
 
   // Background audio state
   const [bgAudioPlans, setBgAudioPlans] = useState<BackgroundAudioPlan[]>([]);
@@ -90,12 +97,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getSetting("break_duration_minutes"),
       getSetting("rest_gap_minutes"),
       getSetting("blocked_time_ranges"),
-    ]).then(([limit, maxCont, breakDur, restGap, blocked]) => {
+      getSetting("skip_daily_limit_date"),
+      getSetting("skip_continuous_limit_date"),
+    ]).then(([limit, maxCont, breakDur, restGap, blocked, skipDaily, skipCont]) => {
       if (limit) setDailyLimitSeconds(parseInt(limit, 10));
       if (maxCont) setMaxContinuousSeconds(parseInt(maxCont, 10) * 60);
       if (breakDur) setBreakDurationSeconds(parseInt(breakDur, 10) * 60);
       if (restGap) setRestGapSeconds(parseInt(restGap, 10) * 60);
       if (blocked) { try { setBlockedRanges(JSON.parse(blocked)); } catch {} }
+      if (skipDaily) setSkipDailyLimitDate(skipDaily);
+      if (skipCont) setSkipContinuousLimitDate(skipCont);
     });
     refreshTodayTotal();
     bgRefreshPlans();
@@ -125,9 +136,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Continuous-watch check: only meaningful while a video is actually playing,
   // so this polls the backend (which derives it from real tick timestamps,
   // not wall-clock time) rather than tracking any elapsed time itself.
+  const isDailyLimitSkippedToday = skipDailyLimitDate === todayDateKey();
+  const isContinuousLimitSkippedToday = skipContinuousLimitDate === todayDateKey();
+
   useEffect(() => {
     const tick = async () => {
-      if (isVideoPlayingRef.current && !isBreakRequired) {
+      if (isVideoPlayingRef.current && !isBreakRequired && !isContinuousLimitSkippedToday) {
         const elapsed = await getContinuousWatchSeconds(restGapSeconds, lastBreakEndAtRef.current ?? undefined);
         if (elapsed >= maxContinuousSeconds) {
           const endsAt = Date.now() + breakDurationSeconds * 1000;
@@ -146,7 +160,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tick();
     const id = setInterval(tick, 1_000);
     return () => clearInterval(id);
-  }, [isBreakRequired, maxContinuousSeconds, breakDurationSeconds, restGapSeconds, blockedRanges]);
+  }, [isBreakRequired, maxContinuousSeconds, breakDurationSeconds, restGapSeconds, blockedRanges, isContinuousLimitSkippedToday]);
 
   const notifyVideoPlay = useCallback(() => {
     isVideoPlayingRef.current = true;
@@ -156,14 +170,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     isVideoPlayingRef.current = false;
   }, []);
 
-  const dismissBreak = useCallback(() => {
-    if (breakRemainingSeconds <= 0) {
+  const dismissBreak = useCallback((force = false) => {
+    if (force || breakRemainingSeconds <= 0) {
       setIsBreakRequired(false);
       breakEndsAtRef.current = null;
       lastBreakEndAtRef.current = new Date().toISOString();
       localStorage.removeItem("breakEndsAt");
     }
   }, [breakRemainingSeconds]);
+
+  const verifyParentPassword = useCallback(async (password: string) => {
+    const stored = await getSetting("parent_password");
+    return !(stored && stored !== "" && stored !== password);
+  }, []);
 
   const toggleParentMode = useCallback(
     async (password?: string) => {
@@ -172,15 +191,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("parentMode", "false");
         return { success: true };
       }
-      const stored = await getSetting("parent_password");
-      if (stored && stored !== "" && stored !== password) {
+      const ok = await verifyParentPassword(password ?? "");
+      if (!ok) {
         return { success: false, error: "密码不正确" };
       }
       setIsParentMode(true);
       localStorage.setItem("parentMode", "true");
       return { success: true };
     },
-    [isParentMode]
+    [isParentMode, verifyParentPassword]
+  );
+
+  const setSkipDailyLimitToday = useCallback(async (enabled: boolean) => {
+    const value = enabled ? todayDateKey() : "";
+    await setSetting("skip_daily_limit_date", value);
+    setSkipDailyLimitDate(enabled ? value : null);
+  }, []);
+
+  const skipBreakOnce = useCallback(
+    async (password: string) => {
+      const ok = await verifyParentPassword(password);
+      if (!ok) return { success: false, error: "密码不正确" };
+      dismissBreak(true);
+      return { success: true };
+    },
+    [verifyParentPassword, dismissBreak]
+  );
+
+  const skipContinuousLimitToday = useCallback(
+    async (password: string) => {
+      const ok = await verifyParentPassword(password);
+      if (!ok) return { success: false, error: "密码不正确" };
+      const value = todayDateKey();
+      await setSetting("skip_continuous_limit_date", value);
+      setSkipContinuousLimitDate(value);
+      dismissBreak(true);
+      return { success: true };
+    },
+    [verifyParentPassword, dismissBreak]
   );
 
   // ── Background audio controls ────────────────────────────────────────────────
@@ -303,12 +351,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         dailyLimitSeconds, todayWatchedSeconds, todayAudioSeconds,
-        isLimitExceeded: todayWatchedSeconds >= dailyLimitSeconds,
+        isLimitExceeded: !isDailyLimitSkippedToday && todayWatchedSeconds >= dailyLimitSeconds,
         setDailyLimit, refreshTodayTotal,
         maxContinuousSeconds, breakDurationSeconds, restGapSeconds, blockedRanges,
         isBreakRequired, breakRemainingSeconds, isBedtime,
         dismissBreak, notifyVideoPlay, notifyVideoPause, saveBreakSettings,
         isParentMode, toggleParentMode,
+        isDailyLimitSkippedToday, setSkipDailyLimitToday, skipBreakOnce, skipContinuousLimitToday,
         bgAudioPlans, bgCurrentPlanId, bgCurrentTrackIdx, bgScopePlanId, bgIsPlaying, bgLoopMode, bgFullscreen,
         bgRefreshPlans, bgSetPlan, bgSetTrack, bgSetScope, bgTogglePlay, bgStop, bgNext, bgPrev, bgSetLoop, bgOnEnded,
         bgSetFullscreen,

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { LoopIcon } from "./LoopIcon";
 import { PlayIcon, PauseIcon, PrevIcon, NextIcon } from "./MediaIcons";
+import { PasswordModal } from "./PasswordModal";
 import type { LoopMode } from "../types";
 
 const BREAK_MESSAGES = [
@@ -93,9 +94,12 @@ function BgMusicControls() {
 }
 
 export function BreakOverlay() {
-  const { isBreakRequired, breakRemainingSeconds, isBedtime, dismissBreak, blockedRanges } =
+  const { isBreakRequired, breakRemainingSeconds, isBedtime, dismissBreak, blockedRanges,
+    skipBreakOnce, skipContinuousLimitToday } =
     useAppContext();
   const [msgIndex, setMsgIndex] = useState(0);
+  const [pwdMode, setPwdMode] = useState<null | "once" | "today">(null);
+  const [pwdErr, setPwdErr] = useState("");
 
   useEffect(() => {
     if (!isBreakRequired && !isBedtime) return;
@@ -106,6 +110,17 @@ export function BreakOverlay() {
   if (!isBreakRequired && !isBedtime) return null;
 
   const canDismiss = isBreakRequired && breakRemainingSeconds <= 0;
+
+  const handleSkipConfirm = async (pwd: string) => {
+    const action = pwdMode === "today" ? skipContinuousLimitToday : skipBreakOnce;
+    const result = await action(pwd);
+    if (result.success) {
+      setPwdMode(null);
+      setPwdErr("");
+    } else {
+      setPwdErr(result.error ?? "密码不正确");
+    }
+  };
 
   const now = new Date();
   const cur = now.getHours() * 60 + now.getMinutes();
@@ -186,7 +201,7 @@ export function BreakOverlay() {
         )}
 
         <button
-          onClick={dismissBreak}
+          onClick={() => dismissBreak()}
           disabled={!canDismiss}
           className="px-8 py-3 rounded-xl font-semibold transition-all text-sm"
           style={
@@ -198,6 +213,23 @@ export function BreakOverlay() {
           {canDismiss ? "继续学习" : `休息中… ${breakRemainingSeconds}s`}
         </button>
 
+        <div className="flex items-center justify-center gap-3 mt-3">
+          <button
+            onClick={() => { setPwdMode("once"); setPwdErr(""); }}
+            className="px-4 py-1.5 rounded-lg text-xs border transition-colors"
+            style={{ borderColor: "#3a2a00", color: "#8a7a3a" }}
+          >
+            本次不限制
+          </button>
+          <button
+            onClick={() => { setPwdMode("today"); setPwdErr(""); }}
+            className="px-4 py-1.5 rounded-lg text-xs border transition-colors"
+            style={{ borderColor: "#3a2a00", color: "#8a7a3a" }}
+          >
+            今日不限制
+          </button>
+        </div>
+
         <div className="flex flex-wrap justify-center gap-3 text-sm mt-4 mb-2" style={{ color: "#5a3a00" }}>
           {["喝水", "走动", "伸展", "闭眼"].map((s) => (
             <span key={s} className="px-3 py-1 rounded-full border" style={{ borderColor: "#3a2a00" }}>
@@ -208,6 +240,16 @@ export function BreakOverlay() {
 
         <BgMusicControls />
       </div>
+
+      {pwdMode && (
+        <PasswordModal
+          title={pwdMode === "today" ? "今日不限制休息" : "本次不限制休息"}
+          subtitle="需要家长密码确认"
+          error={pwdErr}
+          onConfirm={handleSkipConfirm}
+          onCancel={() => { setPwdMode(null); setPwdErr(""); }}
+        />
+      )}
     </div>
   );
 }

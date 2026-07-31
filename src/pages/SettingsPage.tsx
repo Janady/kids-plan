@@ -36,7 +36,8 @@ function SaveBtn({ saved, onClick, label = "保存" }: { saved: boolean; onClick
 
 export default function SettingsPage() {
   const { isParentMode, dailyLimitSeconds, setDailyLimit, maxContinuousSeconds,
-    breakDurationSeconds, restGapSeconds, blockedRanges, saveBreakSettings } = useAppContext();
+    breakDurationSeconds, restGapSeconds, blockedRanges, saveBreakSettings,
+    isDailyLimitSkippedToday, setSkipDailyLimitToday } = useAppContext();
 
   const [dHours, setDHours] = useState(String(Math.floor(dailyLimitSeconds / 3600)));
   const [dMins, setDMins] = useState(String(Math.floor((dailyLimitSeconds % 3600) / 60)));
@@ -167,6 +168,27 @@ export default function SettingsPage() {
           <NumberInput value={dMins} onChange={setDMins} min={0} max={59} unit="分钟" />
         </div>
         <SaveBtn saved={savedLimit} onClick={handleSaveLimit} />
+
+        <div className="mt-4 pt-4 border-t border-gray-700 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-gray-300">今日跳过时长限制</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {isDailyLimitSkippedToday
+                ? "已开启，今天不会锁定（时长仍会记录）"
+                : "特殊情况可临时开启，如周末观影，仅当天有效"}
+            </p>
+          </div>
+          <button
+            onClick={() => setSkipDailyLimitToday(!isDailyLimitSkippedToday)}
+            className={`shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              isDailyLimitSkippedToday
+                ? "bg-green-700 text-green-200"
+                : "bg-gray-700 hover:bg-gray-600 text-gray-300"
+            }`}
+          >
+            {isDailyLimitSkippedToday ? "已开启 ✓" : "开启"}
+          </button>
+        </div>
       </section>
 
       {/* Break */}

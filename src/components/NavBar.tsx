@@ -2,55 +2,12 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
+import { PasswordModal } from "./PasswordModal";
 
 function formatSeconds(s: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function PasswordModal({
-  onConfirm,
-  onCancel,
-}: {
-  onConfirm: (pwd: string) => void;
-  onCancel: () => void;
-}) {
-  const [pwd, setPwd] = useState("");
-  const [err, setErr] = useState("");
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 w-80 shadow-xl">
-        <h2 className="text-base font-semibold text-gray-100 mb-1">切换到家长模式</h2>
-        <p className="text-xs text-gray-500 mb-4">请输入家长密码</p>
-        <input
-          type="password"
-          autoFocus
-          value={pwd}
-          onChange={(e) => { setPwd(e.target.value); setErr(""); }}
-          onKeyDown={(e) => e.key === "Enter" && onConfirm(pwd)}
-          placeholder="密码"
-          className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 outline-none focus:border-sky-500 mb-2"
-        />
-        {err && <p className="text-xs text-red-400 mb-2">{err}</p>}
-        <div className="flex gap-2 mt-1">
-          <button
-            onClick={() => onConfirm(pwd)}
-            className="flex-1 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg text-sm font-medium transition-colors"
-          >
-            确认
-          </button>
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors"
-          >
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function NavBar() {
@@ -59,6 +16,7 @@ export function NavBar() {
   const pct = Math.min(100, Math.round((todayWatchedSeconds / dailyLimitSeconds) * 100));
   const location = useLocation();
   const [showModal, setShowModal] = useState(false);
+  const [modalErr, setModalErr] = useState("");
   const { isTV, isAndroid } = usePlatform();
   const showProgress = !isAndroid || isTV;
 
@@ -68,6 +26,7 @@ export function NavBar() {
     } else {
       const result = await toggleParentMode("");
       if (!result.success) {
+        setModalErr("");
         setShowModal(true);
       }
     }
@@ -77,6 +36,9 @@ export function NavBar() {
     const result = await toggleParentMode(pwd);
     if (result.success) {
       setShowModal(false);
+      setModalErr("");
+    } else {
+      setModalErr(result.error ?? "密码不正确");
     }
   };
 
@@ -156,8 +118,10 @@ export function NavBar() {
 
       {showModal && (
         <PasswordModal
+          title="切换到家长模式"
+          error={modalErr}
           onConfirm={handlePasswordSubmit}
-          onCancel={() => setShowModal(false)}
+          onCancel={() => { setShowModal(false); setModalErr(""); }}
         />
       )}
     </>

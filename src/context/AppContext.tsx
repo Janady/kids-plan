@@ -15,13 +15,18 @@ export interface AppContextValue {
   isBreakRequired: boolean;
   breakRemainingSeconds: number;
   isBedtime: boolean;
-  dismissBreak: () => void;
+  dismissBreak: (force?: boolean) => void;
   notifyVideoPlay: () => void;
   notifyVideoPause: () => void;
   saveBreakSettings: (maxMin: number, breakMin: number, restGapMin: number, ranges: BlockedTimeRange[]) => Promise<void>;
   // Parent/Child mode
   isParentMode: boolean;
   toggleParentMode: (password?: string) => Promise<{ success: boolean; error?: string }>;
+  // Limit exceptions (parent-authorized)
+  isDailyLimitSkippedToday: boolean;
+  setSkipDailyLimitToday: (enabled: boolean) => Promise<void>;
+  skipBreakOnce: (password: string) => Promise<{ success: boolean; error?: string }>;
+  skipContinuousLimitToday: (password: string) => Promise<{ success: boolean; error?: string }>;
   // Background audio player
   bgAudioPlans: BackgroundAudioPlan[];
   bgCurrentPlanId: number | null;

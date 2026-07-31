@@ -147,6 +147,18 @@ pub async fn cast_stop(state: State<'_, CastState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn cast_jump_to(state: State<'_, CastState>, index: usize) -> Result<(), String> {
+    let guard = state.session.lock().await;
+    match guard.as_ref() {
+        Some(session) => session
+            .control_tx
+            .send(CastControl::JumpTo(index))
+            .map_err(|_| "投屏会话已结束".to_string()),
+        None => Err("当前没有投屏会话".to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn get_cast_state(state: State<'_, CastState>) -> Result<Option<CastStateSnapshot>, String> {
     let guard = state.session.lock().await;
     match guard.as_ref() {
