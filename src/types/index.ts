@@ -144,3 +144,43 @@ export interface ScanReport {
   skipped_names: string[]; // titles of skipped files (capped at 20)
   plan: Plan;
 }
+
+export interface RendererInfo {
+  id: string;
+  name: string;
+  location: string;
+}
+
+export interface CastQueueItem {
+  video_id: number;
+  file_path: string;
+  title: string;
+  duration_seconds: number | null;
+}
+
+export type TransportState =
+  | "playing"
+  | "paused"
+  | "stopped"
+  | "transitioning"
+  | "no_media_present"
+  | "unknown";
+
+export type CastPhase =
+  | "loading"
+  | "playing"
+  | "paused"
+  | "finished"
+  | "stopped"
+  | "error";
+
+export interface CastStateSnapshot {
+  renderer_name: string;
+  current: CastQueueItem | null;
+  index: number;
+  total: number;
+  transport_state: TransportState;
+  is_paused_by_break: boolean;
+  phase: CastPhase;
+  error: string | null;
+}

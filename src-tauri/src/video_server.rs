@@ -49,12 +49,26 @@ pub async fn start() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("video server: bind failed");
-    let port = listener.local_addr().unwrap().port();
+    // The localhost server runs for the whole app lifetime, so the accept
+    // loop's task handle is intentionally dropped here (dropping a
+    // JoinHandle detaches it rather than aborting it).
+    let (port, _handle) = serve(listener).await;
     PORT.set(port).ok();
+    port
+}
+
+// Spawns the accept loop on an already-bound listener and returns its port
+// plus a handle the caller can `.abort()` to stop serving. Shared by the
+// localhost server (`start`, above) and the cast feature's LAN-bound
+// listener (`cast::lan_server`, which does abort it when a cast session
+// ends), so the connection-pool/timeout hardening below only has to live in
+// one place.
+pub(crate) async fn serve(listener: TcpListener) -> (u16, tokio::task::JoinHandle<()>) {
+    let port = listener.local_addr().unwrap().port();
 
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((socket, _)) => {
@@ -94,7 +108,7 @@ pub async fn start() -> u16 {
         }
     });
 
-    port
+    (port, handle)
 }
 
 // Serves requests from one connection in a loop (HTTP/1.1 keep-alive) instead of

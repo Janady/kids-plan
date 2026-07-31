@@ -1,8 +1,10 @@
+mod cast;
 mod commands;
 mod db;
 mod thumbnail_cache;
 mod video_server;
 
+use cast::{cast_pause, cast_resume, cast_stop, discover_renderers, get_cast_state, start_cast, CastState};
 use commands::{plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
 use db::AppState;
 use thumbnail_cache::{cache_thumbnail, get_cached_thumbnail};
@@ -93,6 +95,7 @@ pub fn run() {
             });
 
             app.manage(AppState { db: pool, tick_lock: tokio::sync::Mutex::new(()) });
+            app.manage(CastState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -134,6 +137,12 @@ pub fn run() {
             get_plan_time_stats,
             get_overall_stats,
             set_plan_priority,
+            discover_renderers,
+            start_cast,
+            cast_pause,
+            cast_resume,
+            cast_stop,
+            get_cast_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,7 +10,8 @@ import { getCachedThumbnail, cacheThumbnail } from "../api/thumbnails";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
 import { FolderPickerModal } from "../components/FolderPickerModal";
-import type { TodayPlanItem, TodayPendingItem, Plan } from "../types";
+import { CastDevicePickerModal } from "../components/CastDevicePickerModal";
+import type { TodayPlanItem, TodayPendingItem, Plan, CastQueueItem } from "../types";
 
 function formatTime(s: number): string {
   const h = Math.floor(s / 3600);
@@ -425,6 +426,7 @@ export default function HomePage() {
   const [addError, setAddError] = useState<string | null>(null);
   const [addNotice, setAddNotice] = useState<string | null>(null);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [showCastPicker, setShowCastPicker] = useState(false);
   const [scanRoot, setScanRoot] = useState<string>("");
 
   // Load the configured scan root (Settings) so add-plan can start from there
@@ -513,6 +515,18 @@ export default function HomePage() {
   const hasActivePlans = todayItems.length > 0;
   const allDoneToday = hasActivePlans && allPendingTasks.length === 0;
 
+  // Cast queue: same flattened order as allPendingTasks above (plan priority,
+  // then within-plan sort order — get_today_schedule already returns it that
+  // way), audio-only items excluded for v1.
+  const castQueue: CastQueueItem[] = allPendingTasks
+    .filter(({ task }) => task.media_type === "video")
+    .map(({ task }) => ({
+      video_id: task.video_id,
+      file_path: task.file_path,
+      title: task.video_title,
+      duration_seconds: task.video_duration,
+    }));
+
   return (
     <div>
       {showFolderPicker && (
@@ -520,6 +534,13 @@ export default function HomePage() {
           initialPath={scanRoot || undefined}
           onSelect={(path) => { setShowFolderPicker(false); doAddPlan(path); }}
           onCancel={() => setShowFolderPicker(false)}
+        />
+      )}
+      {showCastPicker && (
+        <CastDevicePickerModal
+          queue={castQueue}
+          onCancel={() => setShowCastPicker(false)}
+          onStarted={() => setShowCastPicker(false)}
         />
       )}
       {/* Page header */}
@@ -560,13 +581,23 @@ export default function HomePage() {
             );
           })()}
         </div>
-        <button
-          onClick={handleAddPlan}
-          disabled={adding}
-          className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-sm transition-colors"
-        >
-          {adding ? "选择中…" : "+ 添加计划"}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {isAndroid && !isTV && !isParentMode && castQueue.length > 0 && (
+            <button
+              onClick={() => setShowCastPicker(true)}
+              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+            >
+              📺 投屏
+            </button>
+          )}
+          <button
+            onClick={handleAddPlan}
+            disabled={adding}
+            className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-sm transition-colors"
+          >
+            {adding ? "选择中…" : "+ 添加计划"}
+          </button>
+        </div>
       </div>
 
       {addError && (

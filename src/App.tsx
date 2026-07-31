@@ -6,6 +6,7 @@ import { DailyLimitBanner } from "./components/DailyLimitBanner";
 import { BreakOverlay } from "./components/BreakOverlay";
 import { BackgroundAudioPlayer } from "./components/BackgroundAudioPlayer";
 import { BgFullscreenPlayer } from "./components/BgFullscreenPlayer";
+import { CastStatusBar } from "./components/CastStatusBar";
 import HomePage from "./pages/HomePage";
 import PlanPage from "./pages/PlanPage";
 import PlayerPage from "./pages/PlayerPage";
@@ -57,6 +58,7 @@ export default function App() {
       <NavBar />
       <StoragePermissionBanner />
       <DailyLimitBanner />
+      <CastStatusBar />
       <main className={`flex-1 container mx-auto px-4 py-4 max-w-6xl${isTV ? " pb-20" : hasBgAudio ? " pb-16" : ""}`}>
         <Routes>
           <Route path="/" element={<HomePage />} />
