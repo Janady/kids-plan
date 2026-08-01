@@ -3,7 +3,8 @@ import { AppContext } from "./AppContext";
 import { getSetting, setSetting } from "../api/settings";
 import { getTodayWatchedSeconds, getTodayAudioSeconds, getContinuousWatchSeconds } from "../api/sessions";
 import { listBackgroundAudio } from "../api/plans";
-import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode } from "../types";
+import { castPause, castSwitchVideo, getCastState, onCastStateChanged } from "../api/cast";
+import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode, CastQueueItem, CastStateSnapshot } from "../types";
 
 const DEFAULT_DAILY_LIMIT = 3600;
 const DEFAULT_MAX_CONTINUOUS = 2700;
@@ -54,6 +55,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bgIsPlaying, setBgIsPlaying] = useState(false);
   const [bgLoopMode, setBgLoopMode] = useState<LoopMode>("all");
   const [bgFullscreen, setBgFullscreen] = useState(false);
+
+  // DLNA cast session state — lifted here (rather than living inside
+  // CastStatusBar) so video lists elsewhere (HomePage, PlanPage) can check
+  // whether a cast is active and switch what's playing.
+  const [castSnapshot, setCastSnapshot] = useState<CastStateSnapshot | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   // Whether a video is currently playing — drives the continuous-watch poll below.
   const isVideoPlayingRef = useRef(false);
@@ -110,6 +117,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     refreshTodayTotal();
     bgRefreshPlans();
+
+    // Re-query when the app returns to the foreground — if it was left open
+    // overnight the in-memory todayWatchedSeconds still holds yesterday's value
+    // and the daily-limit lock would incorrectly persist on the new day.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshTodayTotal();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refreshTodayTotal, bgRefreshPlans]);
 
   const setDailyLimit = useCallback(async (seconds: number) => {
@@ -229,6 +245,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return { success: true };
     },
     [verifyParentPassword, dismissBreak]
+  );
+
+  // ── DLNA cast session ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    getCastState().then(setCastSnapshot).catch(() => {});
+    const unlisten = onCastStateChanged((s) => {
+      setCastSnapshot(s);
+      // Ticks land on the Rust side during casting (independent of the local
+      // <video> element), so the nav bar's today-total needs an explicit
+      // nudge to stay in sync instead of only refreshing on its own mount.
+      refreshTodayTotal().catch(() => {});
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [refreshTodayTotal]);
+
+  const isCastActive = !!castSnapshot
+    && castSnapshot.phase !== "finished"
+    && castSnapshot.phase !== "stopped"
+    && castSnapshot.phase !== "error";
+
+  // Keep the screen awake while a cast session is active — on Android, once
+  // the screen sleeps the WebView/app process gets throttled by the OS,
+  // stalling the Tokio runtime that drives the cast session and the LAN
+  // server the renderer streams from, silently breaking the cast. The Wake
+  // Lock spec auto-releases the sentinel when the document goes hidden and
+  // does NOT auto-reacquire on return — only guards against *automatic*
+  // screen timeout, not a manual power-button lock.
+  useEffect(() => {
+    if (!isCastActive || !("wakeLock" in navigator)) return;
+
+    let cancelled = false;
+    const acquire = async () => {
+      try {
+        const sentinel = await navigator.wakeLock.request("screen");
+        if (cancelled) { sentinel.release().catch(() => {}); return; }
+        wakeLockRef.current = sentinel;
+      } catch {
+        // Request can be rejected (e.g. low battery) — nothing to do.
+      }
+    };
+    acquire();
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !wakeLockRef.current) acquire();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
+    };
+  }, [isCastActive]);
+
+  // Pause casting when a break is triggered; deliberately does NOT auto-resume
+  // when the break ends, matching the existing background-music behavior —
+  // the user must tap "继续投屏" themselves.
+  useEffect(() => {
+    if (isBreakRequired && castSnapshot && castSnapshot.phase !== "paused" && castSnapshot.phase !== "error") {
+      castPause().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBreakRequired]);
+
+  const switchCastVideo = useCallback(
+    async (item: CastQueueItem) => {
+      if (!isCastActive) return { success: false, error: "当前没有投屏会话" };
+      try {
+        await castSwitchVideo(item);
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e) };
+      }
+    },
+    [isCastActive]
   );
 
   // ── Background audio controls ────────────────────────────────────────────────
@@ -361,6 +456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         bgAudioPlans, bgCurrentPlanId, bgCurrentTrackIdx, bgScopePlanId, bgIsPlaying, bgLoopMode, bgFullscreen,
         bgRefreshPlans, bgSetPlan, bgSetTrack, bgSetScope, bgTogglePlay, bgStop, bgNext, bgPrev, bgSetLoop, bgOnEnded,
         bgSetFullscreen,
+        castSnapshot, isCastActive, switchCastVideo,
       }}
     >
       {children}

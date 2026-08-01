@@ -204,15 +204,27 @@ interface TaskCardProps {
 
 function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardProps) {
   const navigate = useNavigate();
+  const { isCastActive, castSnapshot, switchCastVideo } = useAppContext();
   const isWatching = task.video_status === "watching";
   const isAudio = task.media_type === "audio";
+  const isCastingThis = castSnapshot?.current?.video_id === task.video_id;
   const pct =
     isWatching && task.video_duration && task.video_duration > 0
       ? Math.min(100, (task.video_progress / task.video_duration) * 100)
       : 0;
 
   const handleClick = () => {
-    if (!isLocked) navigate(`/plan/${planId}/video/${task.video_id}`);
+    if (isLocked) return;
+    if (!isAudio && isCastActive) {
+      switchCastVideo({
+        video_id: task.video_id,
+        file_path: task.file_path,
+        title: task.video_title,
+        duration_seconds: task.video_duration,
+      }).catch(() => {});
+      return;
+    }
+    navigate(`/plan/${planId}/video/${task.video_id}`);
   };
 
   // Audio tasks get a distinct purple theme + icon-based cover (no video thumbnail)
@@ -288,6 +300,10 @@ function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardP
         >
           {isLocked ? (
             <span className="text-2xl">🔒</span>
+          ) : isCastingThis ? (
+            <div className="px-3 py-1.5 rounded-full bg-sky-500/90 text-white text-xs font-semibold flex items-center gap-1">
+              <span>📺</span> 投屏中
+            </div>
           ) : (
             <div className="w-11 h-11 rounded-full bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
               <span className="text-white text-base pl-0.5">▶</span>

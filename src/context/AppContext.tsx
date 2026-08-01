@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode } from "../types";
+import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode, CastQueueItem, CastStateSnapshot } from "../types";
 
 export interface AppContextValue {
   dailyLimitSeconds: number;
@@ -46,6 +46,10 @@ export interface AppContextValue {
   bgSetLoop: (mode: LoopMode) => void;
   bgOnEnded: () => void;
   bgSetFullscreen: (v: boolean) => void;
+  // DLNA cast session (lifted from CastStatusBar so any video list can react)
+  castSnapshot: CastStateSnapshot | null;
+  isCastActive: boolean;
+  switchCastVideo: (item: CastQueueItem) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

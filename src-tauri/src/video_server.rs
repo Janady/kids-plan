@@ -292,13 +292,16 @@ async fn serve_file(
         return false;
     }
 
-    // Stream with a large read-ahead buffer. Reading ~1 MiB per disk op (vs many
-    // small reads) and writing 256 KiB chunks keeps the socket fed steadily, which
-    // prevents the periodic buffer-underrun stalls the WebView player showed every
-    // few minutes.
+    // Stream with a large read-ahead buffer. Reading and writing in 1 MiB chunks
+    // (matching the BufReader's own capacity, so each write drains one full
+    // buffer refill instead of ~4 smaller ones) keeps the socket fed steadily,
+    // which prevents the periodic buffer-underrun stalls the WebView player
+    // showed every few minutes, and cuts per-chunk timeout-wrapper/syscall
+    // overhead for high-bitrate files (notably over the cast LAN server, where
+    // the WiFi hop is already the tighter constraint).
     let mut reader = tokio::io::BufReader::with_capacity(1 << 20, file);
     let mut remaining = content_length;
-    let mut chunk = vec![0u8; 262_144];
+    let mut chunk = vec![0u8; 1 << 20];
     while remaining > 0 {
         let to_read = (remaining as usize).min(chunk.len());
         // Bounded read: a stalled disk (SD card / external storage hiccup)

@@ -17,7 +17,8 @@ export const castResume = (): Promise<void> => invoke("cast_resume");
 
 export const castStop = (): Promise<void> => invoke("cast_stop");
 
-export const castJumpTo = (index: number): Promise<void> => invoke("cast_jump_to", { index });
+export const castSwitchVideo = (item: CastQueueItem): Promise<void> =>
+  invoke("cast_switch_video", { item });
 
 export const getCastState = (): Promise<CastStateSnapshot | null> =>
   invoke("get_cast_state");

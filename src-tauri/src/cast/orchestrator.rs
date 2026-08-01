@@ -52,7 +52,7 @@ pub enum CastControl {
     Pause,
     Resume,
     Stop,
-    JumpTo(usize),
+    SwitchTo(CastQueueItem),
 }
 
 pub type SharedSnapshot = Arc<StdMutex<Option<CastStateSnapshot>>>;
@@ -88,19 +88,17 @@ pub async fn run(
     app: AppHandle,
     device: RendererDevice,
     renderer_name: String,
-    queue: Vec<CastQueueItem>,
+    mut queue: Vec<CastQueueItem>,
     mut control_rx: mpsc::UnboundedReceiver<CastControl>,
     snapshot: SharedSnapshot,
 ) {
-    let total = queue.len();
-
     let (lan_port, lan_task) = match lan_server::start().await {
         Ok(v) => v,
         Err(e) => {
             publish(
                 &app,
                 &snapshot,
-                error_snapshot(&renderer_name, total, queue.clone(), format!("局域网服务启动失败: {e}")),
+                error_snapshot(&renderer_name, queue.clone(), format!("局域网服务启动失败: {e}")),
             );
             clear_session(&app).await;
             return;
@@ -123,7 +121,7 @@ pub async fn run(
                 renderer_name: renderer_name.clone(),
                 current: Some(item.clone()),
                 index,
-                total,
+                total: queue.len(),
                 queue: queue.clone(),
                 transport_state: TransportState::Unknown,
                 is_paused_by_break: false,
@@ -133,11 +131,11 @@ pub async fn run(
         );
 
         if let Err(e) = avtransport::set_av_transport_uri(&device, &media_url).await {
-            publish(&app, &snapshot, error_snapshot(&renderer_name, total, queue.clone(), e));
+            publish(&app, &snapshot, error_snapshot(&renderer_name, queue.clone(), e));
             break;
         }
         if let Err(e) = avtransport::play(&device).await {
-            publish(&app, &snapshot, error_snapshot(&renderer_name, total, queue.clone(), e));
+            publish(&app, &snapshot, error_snapshot(&renderer_name, queue.clone(), e));
             break;
         }
 
@@ -159,7 +157,7 @@ pub async fn run(
                             publish(&app, &snapshot, CastStateSnapshot {
                                 renderer_name: renderer_name.clone(),
                                 current: Some(item.clone()),
-                                index, total,
+                                index, total: queue.len(),
                                 queue: queue.clone(),
                                 transport_state: TransportState::Paused,
                                 is_paused_by_break: true,
@@ -171,19 +169,22 @@ pub async fn run(
                             let _ = avtransport::play(&device).await;
                             paused_by_break = false;
                         }
-                        Some(CastControl::JumpTo(target)) => {
-                            if target < queue.len() && target != index {
-                                let _ = avtransport::stop(&device).await;
-                                index = target;
-                                continue 'queue;
+                        Some(CastControl::SwitchTo(new_item)) => {
+                            let _ = avtransport::stop(&device).await;
+                            if let Some(pos) = queue.iter().position(|q| q.video_id == new_item.video_id) {
+                                index = pos;
+                            } else {
+                                queue.insert(index + 1, new_item);
+                                index += 1;
                             }
+                            continue 'queue;
                         }
                         Some(CastControl::Stop) | None => {
                             let _ = avtransport::stop(&device).await;
                             lan_task.abort();
                             publish(&app, &snapshot, CastStateSnapshot {
                                 renderer_name: renderer_name.clone(),
-                                current: None, index, total,
+                                current: None, index, total: queue.len(),
                                 queue: queue.clone(),
                                 transport_state: TransportState::Stopped,
                                 is_paused_by_break: false,
@@ -213,7 +214,7 @@ pub async fn run(
                             publish(&app, &snapshot, CastStateSnapshot {
                                 renderer_name: renderer_name.clone(),
                                 current: Some(item.clone()),
-                                index, total,
+                                index, total: queue.len(),
                                 queue: queue.clone(),
                                 transport_state: state,
                                 is_paused_by_break: false,
@@ -224,7 +225,7 @@ pub async fn run(
                         Err(_) => {
                             consecutive_failures += 1;
                             if consecutive_failures >= MAX_CONSECUTIVE_POLL_FAILURES {
-                                publish(&app, &snapshot, error_snapshot(&renderer_name, total, queue.clone(), "设备无响应,已停止投屏".to_string()));
+                                publish(&app, &snapshot, error_snapshot(&renderer_name, queue.clone(), "设备无响应,已停止投屏".to_string()));
                                 lan_task.abort();
                                 clear_session(&app).await;
                                 return;
@@ -237,6 +238,7 @@ pub async fn run(
     }
 
     lan_task.abort();
+    let total = queue.len();
     publish(
         &app,
         &snapshot,
@@ -255,7 +257,8 @@ pub async fn run(
     clear_session(&app).await;
 }
 
-fn error_snapshot(renderer_name: &str, total: usize, queue: Vec<CastQueueItem>, error: String) -> CastStateSnapshot {
+fn error_snapshot(renderer_name: &str, queue: Vec<CastQueueItem>, error: String) -> CastStateSnapshot {
+    let total = queue.len();
     CastStateSnapshot {
         renderer_name: renderer_name.to_string(),
         current: None,

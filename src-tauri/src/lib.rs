@@ -4,7 +4,7 @@ mod db;
 mod thumbnail_cache;
 mod video_server;
 
-use cast::{cast_jump_to, cast_pause, cast_resume, cast_stop, discover_renderers, get_cast_state, start_cast, CastState};
+use cast::{cast_pause, cast_resume, cast_stop, cast_switch_video, discover_renderers, get_cast_state, start_cast, CastState};
 use commands::{plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
 use db::AppState;
 use thumbnail_cache::{cache_thumbnail, get_cached_thumbnail};
@@ -142,7 +142,7 @@ pub fn run() {
             cast_pause,
             cast_resume,
             cast_stop,
-            cast_jump_to,
+            cast_switch_video,
             get_cast_state,
         ])
         .run(tauri::generate_context!())

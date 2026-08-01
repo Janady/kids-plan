@@ -147,12 +147,12 @@ pub async fn cast_stop(state: State<'_, CastState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn cast_jump_to(state: State<'_, CastState>, index: usize) -> Result<(), String> {
+pub async fn cast_switch_video(state: State<'_, CastState>, item: CastQueueItem) -> Result<(), String> {
     let guard = state.session.lock().await;
     match guard.as_ref() {
         Some(session) => session
             .control_tx
-            .send(CastControl::JumpTo(index))
+            .send(CastControl::SwitchTo(item))
             .map_err(|_| "投屏会话已结束".to_string()),
         None => Err("当前没有投屏会话".to_string()),
     }

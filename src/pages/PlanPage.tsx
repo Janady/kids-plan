@@ -78,9 +78,11 @@ function VideoFileNode({
   node: TreeNode; planId: number; isLocked: boolean; isParentMode: boolean; episodeNum: number;
 }) {
   const navigate = useNavigate();
+  const { isCastActive, castSnapshot, switchCastVideo } = useAppContext();
   const video = node.video!;
   const cleared = video.file_exists === false; // file removed to free space
   const locked = !isParentMode || cleared;
+  const isCastingThis = castSnapshot?.current?.video_id === video.id;
   const pct = video.status === "watching" && video.duration_seconds
     ? Math.min(100, (video.progress_seconds / video.duration_seconds) * 100) : 0;
 
@@ -89,7 +91,17 @@ function VideoFileNode({
       alert("此视频文件已清理，无法播放。如需重看请重新下载后重新扫描。");
       return;
     }
-    if (!locked) navigate(`/plan/${planId}/video/${video.id}`);
+    if (locked) return;
+    if (isCastActive) {
+      switchCastVideo({
+        video_id: video.id,
+        file_path: video.file_path,
+        title: video.title,
+        duration_seconds: video.duration_seconds,
+      }).catch(() => {});
+      return;
+    }
+    navigate(`/plan/${planId}/video/${video.id}`);
   };
 
   return (
@@ -112,6 +124,9 @@ function VideoFileNode({
           <span className="text-[10px] text-gray-600 shrink-0">{episodeNum}</span>
           <span className={`text-sm truncate ${cleared ? "text-gray-500 line-through" : "text-gray-200"}`}>{video.title}</span>
           {cleared && <span className="text-[10px] text-gray-500 shrink-0 no-underline">已清理</span>}
+          {isCastingThis && (
+            <span className="text-[10px] bg-sky-500/90 text-white font-semibold px-1.5 py-0.5 rounded shrink-0">📺 投屏中</span>
+          )}
         </div>
         {!cleared && video.status === "watching" && video.progress_seconds > 0 && (
           <div className="mt-1 ml-6">
