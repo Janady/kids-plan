@@ -18,7 +18,15 @@ export function CastDevicePickerModal({ queue, onCancel, onStarted }: Props) {
     setLoading(true);
     setError(null);
     discoverRenderers()
-      .then((res) => { setRenderers(res); setLoading(false); })
+      .then((res) => {
+        if (res.length === 1) {
+          // Only one device — skip the picker and start immediately.
+          handleSelect(res[0]);
+          return;
+        }
+        setRenderers(res);
+        setLoading(false);
+      })
       .catch((e) => { setError(String(e)); setLoading(false); });
   };
 

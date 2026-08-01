@@ -44,7 +44,12 @@ pub async fn discover(timeout_dur: Duration) -> Vec<RendererCandidate> {
         }
     }
 
-    let mut found: HashMap<String, String> = HashMap::new();
+    // Deduplicate by location URL, not USN — a single physical device can reply
+    // to both M-SEARCH queries with different USNs (e.g. the device root USN,
+    // the MediaRenderer service USN, and the AVTransport service USN all point
+    // to the same description URL). Keying by USN as before surfaces the same
+    // device 3–4 times in the picker.
+    let mut found: HashMap<String, String> = HashMap::new(); // location → usn
     let mut buf = vec![0u8; 4096];
     let deadline = tokio::time::Instant::now() + timeout_dur;
 
@@ -56,7 +61,7 @@ pub async fn discover(timeout_dur: Duration) -> Vec<RendererCandidate> {
         match timeout(remaining, socket.recv_from(&mut buf)).await {
             Ok(Ok((n, _))) => {
                 if let Some((usn, location)) = parse_response(&buf[..n]) {
-                    found.entry(usn).or_insert(location);
+                    found.entry(location).or_insert(usn);
                 }
             }
             _ => break,
@@ -65,7 +70,7 @@ pub async fn discover(timeout_dur: Duration) -> Vec<RendererCandidate> {
 
     found
         .into_iter()
-        .map(|(usn, location)| RendererCandidate { usn, location })
+        .map(|(location, usn)| RendererCandidate { usn, location })
         .collect()
 }
 
