@@ -64,6 +64,33 @@ bun run audio "D:\path\to\folder" --out "D:\out"
 音频重编码为 AAC，输出带 `+faststart` 便于边下边播。
 转码完成后，在 app 里对相应计划点「重新扫描」即可。
 
+### 批量压缩视频（降分辨率）
+
+有些源视频分辨率很高（1080p/4K）、文件很大，可以批量压缩成 720p（或其他分辨率）来省空间。
+
+```shell
+# 只检测，列出分辨率超过 720p 需要压缩的文件，不改动
+bun run compress "D:\path\to\folder" --check
+
+# 压缩成 720p（递归子目录；原文件保留为 .bak）
+bun run compress "D:\path\to\folder"
+
+# 压缩成 480p
+bun run compress "D:\path\to\folder" --height 480
+
+# 调整画质/速度（crf 越大文件越小画质越差，默认 26；preset 越慢压缩率越高，默认 fast）
+bun run compress "D:\path\to\folder" --crf 28 --preset medium
+
+# 输出到另一个目录，不改动原文件
+bun run compress "D:\path\to\folder" --out "D:\out"
+
+# 直接覆盖原文件（不留 .bak）
+bun run compress "D:\path\to\folder" --replace
+```
+
+只会压缩分辨率超过目标值的视频（横屏按高、竖屏按宽判断），不会放大小视频；
+统一重新编码为 H.264 + AAC 的 `.mp4`，保持与 WebView 播放器的兼容性。
+
 ## IDE
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

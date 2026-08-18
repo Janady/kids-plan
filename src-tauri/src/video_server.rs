@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
+use socket2::SockRef;
 
 // A stalled socket op must not hang forever. When the WebView abandons a stream
 // (seek / switch video / long pause) it stops reading; without a timeout the
@@ -75,6 +76,13 @@ pub(crate) async fn serve(listener: TcpListener) -> (u16, tokio::task::JoinHandl
                     // Disable Nagle's algorithm: send media bytes immediately instead of
                     // batching them, which removes periodic latency spikes during playback.
                     let _ = socket.set_nodelay(true);
+                    // Expand the kernel TCP send buffer to 4 MB (~2.4 sec of video at
+                    // 13.6 Mbps). This lets TCP retransmission RTOs (typically 1-3 sec)
+                    // complete while the cast receiver's playback buffer still has data,
+                    // preventing the 2-3 sec stutters caused by WiFi packet loss when the
+                    // default 64-128 KB buffer drains during retransmit waits.
+                    let sock_ref = SockRef::from(&socket);
+                    let _ = sock_ref.set_send_buffer_size(4 << 20);
                     let permits = connections.clone();
                     tokio::spawn(async move {
                         // Hold the permit for the connection's whole lifetime (all
