@@ -4,6 +4,17 @@ export type MediaType = "video" | "audio";
 export type AudioRole = "plan" | "background";
 export type LoopMode = "shuffle" | "track" | "all";
 
+export interface PlanPreviewVideo {
+  id: number;
+  title: string;
+  status: VideoStatus;
+  progress_seconds: number;
+  duration_seconds: number | null;
+  sort_order: number;
+  media_type: MediaType;
+  file_path: string;
+}
+
 export interface Plan {
   id: number;
   name: string;
@@ -27,6 +38,7 @@ export interface Plan {
   next_video_duration: number | null;
   next_video_sort_order: number | null;
   next_video_media_type: MediaType | null;
+  recent_videos: PlanPreviewVideo[];
   created_at: string;
   updated_at: string;
 }

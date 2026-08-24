@@ -1,15 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { open } from "@tauri-apps/plugin-dialog";
 import { getTodaySchedule } from "../api/schedule";
-import { addPlan, listPlans } from "../api/plans";
+import { listPlans } from "../api/plans";
 import { markVideoWatchedEarlier } from "../api/videos";
-import { getSetting } from "../api/settings";
 import { getVideoUrl } from "../api/videoSrc";
 import { getCachedThumbnail, cacheThumbnail } from "../api/thumbnails";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
-import { FolderPickerModal } from "../components/FolderPickerModal";
 import { CastDevicePickerModal } from "../components/CastDevicePickerModal";
 import type { TodayPlanItem, TodayPendingItem, Plan, CastQueueItem } from "../types";
 
@@ -371,65 +368,6 @@ function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardP
   );
 }
 
-// ─── Compact plan card for "all plans" section ────────────────────────────────
-
-const PRIORITY_LABELS = ["无", "低", "中", "高"];
-const PRIORITY_BADGE = [
-  "",
-  "bg-blue-900/50 text-blue-300",
-  "bg-yellow-900/50 text-yellow-300",
-  "bg-red-900/50 text-red-300",
-];
-
-function MiniPlanCard({ plan }: { plan: Plan }) {
-  const navigate = useNavigate();
-  const total = plan.video_count + plan.audio_count;
-  const pct = total > 0 ? Math.round((plan.watched_count / total) * 100) : 0;
-
-  return (
-    <div
-      onClick={() => navigate(`/plan/${plan.id}`)}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") navigate(`/plan/${plan.id}`); }}
-      tabIndex={0}
-      role="button"
-      className="bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-sky-600 focus:border-sky-500 rounded-lg px-4 py-3 cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-gray-950"
-    >
-      <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="text-sm font-medium text-gray-200 truncate">{plan.name}</span>
-        <div className="flex items-center gap-1 shrink-0">
-          {plan.priority > 0 && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${PRIORITY_BADGE[plan.priority]}`}>
-              优先级·{PRIORITY_LABELS[plan.priority]}
-            </span>
-          )}
-          {!!plan.daily_schedule_active && (
-            <span className="text-[10px] bg-sky-800/60 text-sky-300 px-1.5 py-0.5 rounded">
-              每日{plan.episodes_per_day}集
-            </span>
-          )}
-        </div>
-      </div>
-      {/* Media type counts */}
-      <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-1.5">
-        {plan.video_count > 0 && <span>🎬 {plan.video_count}</span>}
-        {plan.audio_count > 0 && <span>🎵 {plan.audio_count}</span>}
-        {plan.is_background === 1 && <span className="text-purple-400">🎶</span>}
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-1 bg-gray-700 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full ${pct === 100 ? "bg-green-500" : "bg-sky-500"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <span className="text-[10px] text-gray-500 shrink-0">
-          {plan.watched_count}/{total}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -438,17 +376,7 @@ export default function HomePage() {
   const { isTV, isAndroid } = usePlatform();
   const [todayItems, setTodayItems] = useState<TodayPlanItem[]>([]);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const [addNotice, setAddNotice] = useState<string | null>(null);
-  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [showCastPicker, setShowCastPicker] = useState(false);
-  const [scanRoot, setScanRoot] = useState<string>("");
-
-  // Load the configured scan root (Settings) so add-plan can start from there
-  useEffect(() => {
-    getSetting("scan_root_dir").then((v) => { if (v) setScanRoot(v); });
-  }, []);
 
   // Flatten background tracks from AppContext (already loaded, includes play_count_30d)
   const bgTopTracks = bgAudioPlans
@@ -468,49 +396,6 @@ export default function HomePage() {
     await markVideoWatchedEarlier(videoId);
     await loadData();
   }, [loadData]);
-
-  const doAddPlan = async (folderPath: string) => {
-    setAdding(true);
-    setAddError(null);
-    setAddNotice(null);
-    try {
-      const report = await addPlan(folderPath);
-      // Tell the user exactly what the scan found
-      const parts = [`发现 ${report.found} 个媒体文件`, `新增 ${report.added} 个`];
-      if (report.skipped > 0) {
-        const names = report.skipped_names.slice(0, 5).join("、");
-        const more = report.skipped_names.length < report.skipped ? " 等" : "";
-        parts.push(`${report.skipped} 个已被其它计划收录（${names}${more}）`);
-      }
-      setAddNotice(parts.join("，"));
-      await loadData();
-    } catch (e) {
-      setAddError(String(e));
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const handleAddPlan = async () => {
-    if (isAndroid) {
-      setShowFolderPicker(true);
-      return;
-    }
-    setAdding(true);
-    setAddError(null);
-    try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: scanRoot || undefined,
-      });
-      if (selected) await doAddPlan(String(selected));
-    } catch (e) {
-      setAddError(String(e));
-    } finally {
-      setAdding(false);
-    }
-  };
 
   // Flatten all pending tasks across active plans
   const allPendingTasks = todayItems.flatMap((item) =>
@@ -545,13 +430,6 @@ export default function HomePage() {
 
   return (
     <div>
-      {showFolderPicker && (
-        <FolderPickerModal
-          initialPath={scanRoot || undefined}
-          onSelect={(path) => { setShowFolderPicker(false); doAddPlan(path); }}
-          onCancel={() => setShowFolderPicker(false)}
-        />
-      )}
       {showCastPicker && (
         <CastDevicePickerModal
           queue={castQueue}
@@ -606,29 +484,8 @@ export default function HomePage() {
               📺 投屏
             </button>
           )}
-          <button
-            onClick={handleAddPlan}
-            disabled={adding}
-            className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 rounded-lg text-sm transition-colors"
-          >
-            {adding ? "选择中…" : "+ 添加计划"}
-          </button>
         </div>
       </div>
-
-      {addError && (
-        <div className="mb-4 px-4 py-3 bg-red-900/50 border border-red-700 rounded-lg text-sm text-red-300">
-          {addError}
-        </div>
-      )}
-
-      {addNotice && (
-        <div className="mb-4 px-4 py-3 bg-sky-900/40 border border-sky-700/60 rounded-lg text-sm text-sky-200 flex items-start gap-2">
-          <span className="shrink-0">📋</span>
-          <span className="flex-1">{addNotice}</span>
-          <button onClick={() => setAddNotice(null)} className="shrink-0 text-sky-400 hover:text-sky-200">✕</button>
-        </div>
-      )}
 
       {/* ── Today's tasks ── */}
       {/* In parent mode, playback records no progress and can't advance tasks,
@@ -641,12 +498,20 @@ export default function HomePage() {
           <p className="text-sm text-gray-500 mb-4">
             家长模式下播放不计时、不推进任务。请切换回儿童模式再开始今日学习。
           </p>
-          <button
-            onClick={() => toggleParentMode()}
-            className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg text-sm font-medium transition-colors"
-          >
-            切换到儿童模式
-          </button>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={() => navigate("/plans")}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+            >
+              去配置计划
+            </button>
+            <button
+              onClick={() => toggleParentMode()}
+              className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg text-sm font-medium transition-colors"
+            >
+              切换到儿童模式
+            </button>
+          </div>
         </div>
       ) : !hasActivePlans ? (
         <div className="bg-gray-800/40 border border-dashed border-gray-700 rounded-xl px-6 py-10 text-center mb-8">
@@ -655,7 +520,12 @@ export default function HomePage() {
           <p className="text-sm text-gray-500 mb-4">
             进入某个计划，点击「加入每日计划」，首页会每天推荐要看的集数
           </p>
-          <p className="text-sky-400 text-sm">下方可浏览全部计划 ↓</p>
+          <button
+            onClick={() => navigate("/plans")}
+            className="text-sky-400 text-sm hover:text-sky-300 transition-colors"
+          >
+            去计划页浏览全部计划 →
+          </button>
         </div>
       ) : allDoneToday ? (
         <div className="bg-green-900/15 border border-green-800/30 rounded-xl px-6 py-8 text-center mb-8">
@@ -772,22 +642,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ── All plans ── */}
-      {allPlans.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              全部计划 ({allPlans.length})
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {allPlans.map((plan) => (
-              <MiniPlanCard key={plan.id} plan={plan} />
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

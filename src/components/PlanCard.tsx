@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import type { Plan, PlanStatus } from "../types";
+import { useAppContext } from "../context/AppContext";
+import type { Plan, PlanPreviewVideo, PlanStatus, VideoStatus } from "../types";
 
 const STATUS_LABEL: Record<PlanStatus, string> = {
   not_started: "未开始",
@@ -13,6 +14,14 @@ const STATUS_COLOR: Record<PlanStatus, string> = {
   completed: "bg-green-800 text-green-200",
 };
 
+const PRIORITY_LABELS = ["无", "低", "中", "高"];
+const PRIORITY_BADGE = [
+  "",
+  "bg-blue-900/50 text-blue-300",
+  "bg-yellow-900/50 text-yellow-300",
+  "bg-red-900/50 text-red-300",
+];
+
 function formatTime(s: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -21,56 +30,47 @@ function formatTime(s: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+export function canOpenPlanMedia(isParentMode: boolean, status: VideoStatus): boolean {
+  return isParentMode || status === "watched";
+}
+
 interface Props {
   plan: Plan;
 }
 
 export function PlanCard({ plan }: Props) {
   const navigate = useNavigate();
-  const pct =
-    plan.video_count > 0
-      ? Math.round((plan.watched_count / plan.video_count) * 100)
-      : 0;
+  const { isParentMode, isCastActive, castSnapshot, switchCastVideo } = useAppContext();
+  const total = plan.video_count + plan.audio_count;
+  const pct = total > 0 ? Math.round((plan.watched_count / total) * 100) : 0;
+  const recentVideos = plan.recent_videos ?? [];
+  const extraCount = Math.max(0, total - recentVideos.length);
 
-  const episodeNum =
-    plan.next_video_sort_order !== null ? plan.next_video_sort_order + 1 : null;
+  const goDetail = () => navigate(`/plan/${plan.id}`);
 
-  const isWatching = plan.next_video_status === "watching";
-  const isCompleted = plan.status === "completed";
-
-  const nextLabel = isCompleted
-    ? "已全部完成 · 最后一课"
-    : isWatching
-    ? "继续观看"
-    : plan.status === "not_started"
-    ? "即将开始"
-    : "下一课";
-
-  const playBtnLabel = isCompleted ? "重温" : isWatching ? "继续" : "开始";
-
-  const progressPct =
-    isWatching && plan.next_video_progress && plan.next_video_duration
-      ? Math.min(100, Math.round((plan.next_video_progress / plan.next_video_duration) * 100))
-      : 0;
-
-  const handleCardClick = () => navigate(`/plan/${plan.id}`);
-
-  const handlePlayClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (plan.next_video_id) {
-      navigate(`/plan/${plan.id}/video/${plan.next_video_id}`);
+  const openVideo = (item: PlanPreviewVideo) => {
+    if (!canOpenPlanMedia(isParentMode, item.status)) return;
+    if (item.media_type !== "audio" && isCastActive) {
+      switchCastVideo({
+        video_id: item.id,
+        file_path: item.file_path,
+        title: item.title,
+        duration_seconds: item.duration_seconds,
+      }).catch(() => {});
+      return;
     }
+    navigate(`/plan/${plan.id}/video/${item.id}`);
   };
 
   return (
-    <div
-      onClick={handleCardClick}
-      className="bg-gray-800 border border-gray-700 hover:border-sky-600 rounded-xl overflow-hidden cursor-pointer transition-all group"
-    >
-      {/* Header */}
-      <div className="px-5 pt-5 pb-3">
+    <div className="bg-gray-800 border border-gray-700 hover:border-sky-600 rounded-xl overflow-hidden transition-all">
+      <button
+        type="button"
+        onClick={goDetail}
+        className="w-full text-left px-5 pt-5 pb-3 hover:bg-gray-750/40 transition-colors"
+      >
         <div className="flex items-start justify-between gap-3 mb-1">
-          <h3 className="font-semibold text-gray-100 leading-tight line-clamp-2 group-hover:text-sky-300 transition-colors">
+          <h3 className="font-semibold text-gray-100 leading-tight line-clamp-2">
             {plan.name}
           </h3>
           <span
@@ -79,88 +79,107 @@ export function PlanCard({ plan }: Props) {
             {STATUS_LABEL[plan.status as PlanStatus]}
           </span>
         </div>
-        <div className="text-xs text-gray-500">
-          {plan.watched_count}/{plan.video_count} 集已完成
+        <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
+          {plan.video_count > 0 && <span>🎬 {plan.video_count}</span>}
+          {plan.audio_count > 0 && <span>🎵 {plan.audio_count}</span>}
+          {plan.is_background === 1 && <span className="text-purple-400">🎶</span>}
+          {plan.priority > 0 && (
+            <span className={`px-1.5 py-0.5 rounded ${PRIORITY_BADGE[plan.priority]}`}>
+              优先级·{PRIORITY_LABELS[plan.priority]}
+            </span>
+          )}
+          {!!plan.daily_schedule_active && (
+            <span className="bg-sky-800/60 text-sky-300 px-1.5 py-0.5 rounded">
+              每日{plan.episodes_per_day}集
+            </span>
+          )}
+          <span>{plan.watched_count}/{total} 已完成</span>
         </div>
-
-        {/* Overall progress bar */}
         <div className="mt-3 w-full h-1 bg-gray-700 rounded-full overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all ${
-              pct === 100 ? "bg-green-500" : "bg-sky-500"
-            }`}
+            className={`h-full rounded-full transition-all ${pct === 100 ? "bg-green-500" : "bg-sky-500"}`}
             style={{ width: `${pct}%` }}
           />
         </div>
-      </div>
+      </button>
 
-      {/* Next video preview */}
-      {plan.next_video_id && plan.next_video_title && (
-        <div
-          className={`mx-3 mb-3 rounded-lg px-4 py-3 flex items-center gap-3 ${
-            isCompleted
-              ? "bg-green-900/30 border border-green-800/40"
-              : isWatching
-              ? "bg-yellow-900/30 border border-yellow-700/40"
-              : "bg-gray-700/50 border border-gray-600/40"
-          }`}
-        >
-          {/* Episode info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <span
-                className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                  isCompleted
-                    ? "bg-green-800/60 text-green-300"
-                    : isWatching
-                    ? "bg-yellow-800/60 text-yellow-300"
-                    : "bg-gray-600/60 text-gray-400"
+      <div className="px-3 pb-3 flex flex-col gap-1.5">
+        {recentVideos.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-gray-500">暂无媒体文件</div>
+        ) : (
+          recentVideos.map((item) => {
+            const canOpen = canOpenPlanMedia(isParentMode, item.status);
+            const isAudio = item.media_type === "audio";
+            const isWatching = item.status === "watching";
+            const isCastingThis = castSnapshot?.current?.video_id === item.id;
+            const progressPct =
+              isWatching && item.duration_seconds && item.duration_seconds > 0
+                ? Math.min(100, Math.round((item.progress_seconds / item.duration_seconds) * 100))
+                : 0;
+
+            return (
+              <div
+                key={item.id}
+                role="button"
+                tabIndex={canOpen ? 0 : -1}
+                onClick={() => openVideo(item)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openVideo(item);
+                  }
+                }}
+                className={`rounded-lg px-3 py-2.5 border transition-all ${
+                  canOpen
+                    ? isWatching
+                      ? "border-yellow-700/50 bg-gray-900/40 hover:border-yellow-500 cursor-pointer"
+                      : "border-gray-700/60 bg-gray-900/40 hover:border-sky-600 cursor-pointer"
+                    : "border-gray-800 bg-gray-900/20 opacity-50 cursor-not-allowed"
                 }`}
               >
-                {nextLabel}
-              </span>
-              {episodeNum && (
-                <span className="text-[10px] text-gray-500">
-                  第 {episodeNum} 集
-                </span>
-              )}
-            </div>
-
-            <div className="text-sm text-gray-200 truncate leading-snug">
-              {plan.next_video_title}
-            </div>
-
-            {/* Progress bar for watching */}
-            {isWatching && progressPct > 0 && (
-              <div className="mt-1.5">
-                <div className="w-full h-1 bg-gray-600 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-yellow-400 rounded-full"
-                    style={{ width: `${progressPct}%` }}
-                  />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs shrink-0">{isAudio ? "🎵" : "🎬"}</span>
+                  <span className="text-[10px] text-gray-600 shrink-0">{item.sort_order + 1}</span>
+                  <span className="flex-1 min-w-0 text-sm text-gray-200 truncate">{item.title}</span>
+                  {isCastingThis && (
+                    <span className="text-[10px] bg-sky-500/90 text-white font-semibold px-1.5 py-0.5 rounded shrink-0">
+                      📺
+                    </span>
+                  )}
+                  {!canOpen && <span className="text-xs shrink-0">🔒</span>}
+                  {item.status === "watched" && (
+                    <span className="text-[10px] text-green-500 shrink-0">已学</span>
+                  )}
+                  {item.duration_seconds != null && (
+                    <span className="text-[10px] text-gray-600 shrink-0">{formatTime(item.duration_seconds)}</span>
+                  )}
                 </div>
-                <div className="text-[10px] text-yellow-400 mt-0.5">
-                  已看至 {formatTime(plan.next_video_progress!)}
-                  {plan.next_video_duration ? ` / ${formatTime(plan.next_video_duration)}` : ""}
-                </div>
+                {isWatching && progressPct > 0 && (
+                  <div className="mt-1.5 ml-6">
+                    <div className="w-full h-0.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-yellow-400" style={{ width: `${progressPct}%` }} />
+                    </div>
+                    <span className="text-[10px] text-yellow-400">
+                      {isAudio ? "已听至" : "已看至"} {formatTime(item.progress_seconds)}
+                      {item.duration_seconds ? ` / ${formatTime(item.duration_seconds)}` : ""}
+                    </span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })
+        )}
 
-          {/* Play button */}
+        {extraCount > 0 && (
           <button
-            onClick={handlePlayClick}
-            className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
-              isCompleted
-                ? "bg-green-700 hover:bg-green-600 text-white"
-                : "bg-sky-600 hover:bg-sky-500 text-white"
-            }`}
-            title={playBtnLabel}
+            type="button"
+            onClick={goDetail}
+            className="mt-0.5 px-3 py-1.5 text-xs text-sky-400 hover:text-sky-300 text-left transition-colors"
           >
-            ▶
+            还有 {extraCount} 个，查看全部 →
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

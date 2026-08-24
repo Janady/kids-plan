@@ -8,6 +8,7 @@ import { BackgroundAudioPlayer } from "./components/BackgroundAudioPlayer";
 import { BgFullscreenPlayer } from "./components/BgFullscreenPlayer";
 import { CastStatusBar } from "./components/CastStatusBar";
 import HomePage from "./pages/HomePage";
+import PlansPage from "./pages/PlansPage";
 import PlanPage from "./pages/PlanPage";
 import PlayerPage from "./pages/PlayerPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -62,6 +63,7 @@ export default function App() {
       <main className={`flex-1 container mx-auto px-4 py-4 max-w-6xl${isTV ? " pb-20" : hasBgAudio ? " pb-16" : ""}`}>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/plans" element={<PlansPage />} />
           <Route path="/plan/:planId" element={<PlanPage />} />
           <Route path="/plan/:planId/video/:videoId" element={<PlayerPage />} />
           <Route path="/settings" element={<SettingsPage />} />

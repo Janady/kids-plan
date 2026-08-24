@@ -42,11 +42,11 @@ export function NavBar() {
     }
   };
 
-  const navLink = (to: string, label: string) => (
+  const navLink = (to: string, label: string, active = location.pathname === to) => (
     <Link
       to={to}
       className={`text-sm hover:text-sky-400 transition-colors ${
-        location.pathname === to ? "text-sky-400" : "text-gray-400"
+        active ? "text-sky-400" : "text-gray-400"
       }`}
     >
       {label}
@@ -75,6 +75,11 @@ export function NavBar() {
           学习计划
         </Link>
 
+        {navLink(
+          "/plans",
+          "计划",
+          location.pathname === "/plans" || location.pathname.startsWith("/plan/"),
+        )}
         {navLink("/stats", "统计")}
         {isParentMode && navLink("/cleanup", "清理")}
         {isParentMode && navLink("/settings", "设置")}

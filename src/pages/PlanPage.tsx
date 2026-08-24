@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useVideos } from "../hooks/useVideos";
 import { useAppContext } from "../context/AppContext";
 import {
@@ -6,6 +6,7 @@ import {
   setPlanBackground,
 } from "../api/plans";
 import { useState, useEffect } from "react";
+import { canOpenPlanMedia } from "../components/PlanCard";
 import type { Plan, Video } from "../types";
 
 // ─── Priority ────────────────────────────────────────────────────────────────
@@ -81,7 +82,7 @@ function VideoFileNode({
   const { isCastActive, castSnapshot, switchCastVideo } = useAppContext();
   const video = node.video!;
   const cleared = video.file_exists === false; // file removed to free space
-  const locked = !isParentMode || cleared;
+  const locked = cleared || !canOpenPlanMedia(isParentMode, video.status);
   const isCastingThis = castSnapshot?.current?.video_id === video.id;
   const pct = video.status === "watching" && video.duration_seconds
     ? Math.min(100, (video.progress_seconds / video.duration_seconds) * 100) : 0;
@@ -123,6 +124,7 @@ function VideoFileNode({
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-gray-600 shrink-0">{episodeNum}</span>
           <span className={`text-sm truncate ${cleared ? "text-gray-500 line-through" : "text-gray-200"}`}>{video.title}</span>
+          {video.status === "watched" && !cleared && <span className="text-[10px] text-green-500 shrink-0">已学</span>}
           {cleared && <span className="text-[10px] text-gray-500 shrink-0 no-underline">已清理</span>}
           {isCastingThis && (
             <span className="text-[10px] bg-sky-500/90 text-white font-semibold px-1.5 py-0.5 rounded shrink-0">📺 投屏中</span>
@@ -204,7 +206,7 @@ function VideoTreeLevel({
 // ─── Audio tab ────────────────────────────────────────────────────────────────
 
 function AudioTab({
-  videos, planId, plan, epPerDay, setEpPerDay, activating,
+  videos, planId, plan, epPerDay, setEpPerDay, activating, isParentMode,
   onActivate, onDeactivate, onPriorityChange, onBackgroundToggle,
 }: {
   videos: Video[];
@@ -213,6 +215,7 @@ function AudioTab({
   epPerDay: number;
   setEpPerDay: (n: number) => void;
   activating: boolean;
+  isParentMode: boolean;
   onActivate: () => void;
   onDeactivate: () => void;
   onPriorityChange: (p: number) => void;
@@ -234,7 +237,7 @@ function AudioTab({
   return (
     <div className="space-y-4">
       {/* Background music checkbox */}
-      <div className="px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+      {isParentMode && <div className="px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg">
         <label className="flex items-center gap-3 cursor-pointer">
           <input
             type="checkbox"
@@ -250,10 +253,10 @@ function AudioTab({
             </p>
           </div>
         </label>
-      </div>
+      </div>}
 
       {/* Priority */}
-      <div className="flex items-center gap-3 flex-wrap">
+      {isParentMode && <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-500">优先级</span>
         <div className="flex gap-1">
           {PRIORITY_LABELS.map((label, i) => (
@@ -273,10 +276,10 @@ function AudioTab({
         {plan.is_locked_by_priority && (
           <span className="text-xs text-orange-400">🔒 存在更高优先级计划未完成</span>
         )}
-      </div>
+      </div>}
 
       {/* Daily schedule */}
-      {plan.daily_schedule_active ? (
+      {isParentMode && (plan.daily_schedule_active ? (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-sky-900/20 border border-sky-800/40 rounded-lg">
           <span className="text-sky-400 text-sm">📋 每日推荐 {plan.episodes_per_day} 集</span>
           <div className="ml-auto flex items-center gap-2">
@@ -304,7 +307,7 @@ function AudioTab({
             </button>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Audio file list */}
       <div className="flex flex-col gap-1">
@@ -314,17 +317,20 @@ function AudioTab({
             bgIsPlaying &&
             bgCurrentPlanId === planId &&
             bgAudioPlans.find((p) => p.id === planId)?.tracks[bgCurrentTrackIdx]?.id === v.id;
+          const canOpen = canOpenPlanMedia(isParentMode, v.status);
 
           return (
             <div
               key={v.id}
-              onClick={() => navigate(`/plan/${planId}/video/${v.id}`)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
-                isBgPlaying
-                  ? "border-purple-700/60 bg-purple-900/20 hover:border-purple-500"
+              onClick={() => { if (canOpen) navigate(`/plan/${planId}/video/${v.id}`); }}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all ${
+                !canOpen
+                  ? "border-gray-800 opacity-40 cursor-not-allowed bg-gray-900/30"
+                  : isBgPlaying
+                  ? "border-purple-700/60 bg-purple-900/20 hover:border-purple-500 cursor-pointer"
                   : v.status === "watching"
-                  ? "border-yellow-700/50 bg-gray-800 hover:border-yellow-500"
-                  : "border-gray-700/50 bg-gray-800 hover:border-sky-600"
+                  ? "border-yellow-700/50 bg-gray-800 hover:border-yellow-500 cursor-pointer"
+                  : "border-gray-700/50 bg-gray-800 hover:border-sky-600 cursor-pointer"
               }`}
             >
               <span className={`text-sm shrink-0 ${isBgPlaying ? "text-purple-400" : "text-gray-500"}`}>
@@ -336,6 +342,10 @@ function AudioTab({
                   <span className={`text-sm truncate ${isBgPlaying ? "text-purple-300" : "text-gray-200"}`}>
                     {v.title}
                   </span>
+                  {v.status === "watched" && (
+                    <span className="text-[10px] text-green-500 shrink-0">已学</span>
+                  )}
+                  {!canOpen && <span className="text-xs shrink-0">🔒</span>}
                 </div>
                 {v.status === "watching" && v.progress_seconds > 0 && (
                   <span className="text-[10px] text-yellow-400 ml-5">
@@ -376,6 +386,7 @@ function AudioTab({
 export default function PlanPage() {
   const { planId } = useParams<{ planId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const id = Number(planId);
   const { videos, loading, error, refresh } = useVideos(id);
   const { isLimitExceeded, isParentMode, bgRefreshPlans } = useAppContext();
@@ -385,7 +396,9 @@ export default function PlanPage() {
   const [activating, setActivating] = useState(false);
   const [priority, setPriority] = useState(0);
   const [activeTab, setActiveTab] = useState<"video" | "audio">("video");
-  const [scanNotice, setScanNotice] = useState<string | null>(null);
+  const [scanNotice, setScanNotice] = useState<string | null>(
+    (location.state as { scanNotice?: string } | null)?.scanNotice ?? null,
+  );
 
   const loadPlan = async () => {
     const all = await listPlans();
@@ -429,7 +442,7 @@ export default function PlanPage() {
   const handleDelete = async () => {
     if (!confirm("确认删除此计划？（不会删除磁盘上的文件）")) return;
     await deletePlan(id);
-    navigate("/");
+    navigate("/plans");
   };
 
   const handleActivate = async () => {
@@ -457,17 +470,19 @@ export default function PlanPage() {
     <div>
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
-        <button onClick={() => navigate("/")} className="text-gray-400 hover:text-gray-200 text-sm transition-colors">
+        <button onClick={() => navigate("/plans")} className="text-gray-400 hover:text-gray-200 text-sm transition-colors">
           ← 返回
         </button>
-        <div className="flex items-center gap-2 ml-auto">
-          <button onClick={handleRescan} disabled={rescanning} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg transition-colors">
-            {rescanning ? "扫描中…" : "重新扫描"}
-          </button>
-          <button onClick={handleDelete} className="px-3 py-1.5 text-xs bg-red-900/60 hover:bg-red-800 rounded-lg transition-colors text-red-300">
-            删除
-          </button>
-        </div>
+        {isParentMode && (
+          <div className="flex items-center gap-2 ml-auto">
+            <button onClick={handleRescan} disabled={rescanning} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg transition-colors">
+              {rescanning ? "扫描中…" : "重新扫描"}
+            </button>
+            <button onClick={handleDelete} className="px-3 py-1.5 text-xs bg-red-900/60 hover:bg-red-800 rounded-lg transition-colors text-red-300">
+              删除
+            </button>
+          </div>
+        )}
       </div>
 
       {plan && (
@@ -487,6 +502,13 @@ export default function PlanPage() {
           <span className="shrink-0">📋</span>
           <span className="flex-1">{scanNotice}</span>
           <button onClick={() => setScanNotice(null)} className="shrink-0 text-sky-400 hover:text-sky-200">✕</button>
+        </div>
+      )}
+
+      {!isParentMode && (
+        <div className="mb-4 flex items-center gap-2 px-4 py-2.5 bg-gray-800/40 border border-gray-700 rounded-lg text-sm text-gray-500">
+          <span>🔒</span>
+          <span>儿童模式可重温已学内容。未学内容请在「今日学习」完成，或切换到家长模式</span>
         </div>
       )}
 
@@ -515,7 +537,7 @@ export default function PlanPage() {
       {(activeTab === "video" || !showTabs) && hasVideo && plan && (
         <div>
           {/* Priority */}
-          <div className="flex items-center gap-3 flex-wrap mb-3">
+          {isParentMode && <div className="flex items-center gap-3 flex-wrap mb-3">
             <span className="text-xs text-gray-500">优先级</span>
             <div className="flex gap-1">
               {PRIORITY_LABELS.map((label, i) => (
@@ -535,10 +557,10 @@ export default function PlanPage() {
             {plan.is_locked_by_priority && (
               <span className="text-xs text-orange-400">🔒 存在更高优先级计划未完成</span>
             )}
-          </div>
+          </div>}
 
           {/* Daily schedule */}
-          {plan.daily_schedule_active ? (
+          {isParentMode && (plan.daily_schedule_active ? (
             <div className="flex items-center gap-3 px-4 py-2.5 bg-sky-900/20 border border-sky-800/40 rounded-lg mb-4">
               <span className="text-sky-400 text-sm">📋 每日推荐 {plan.episodes_per_day} 集</span>
               <div className="ml-auto flex items-center gap-2">
@@ -561,22 +583,14 @@ export default function PlanPage() {
                 </button>
               </div>
             </div>
-          )}
-
-          {/* Parent mode notice */}
-          {!isParentMode && (
-            <div className="mb-4 flex items-center gap-2 px-4 py-2.5 bg-gray-800/40 border border-gray-700 rounded-lg text-sm text-gray-500">
-              <span>🔒</span>
-              <span>切换到家长模式后可播放视频</span>
-            </div>
-          )}
+          ))}
 
           {loading && <div className="text-center text-gray-500 py-8">加载中…</div>}
           {error && <div className="text-center text-red-400 py-4">{error}</div>}
           {!loading && videoTree.length === 0 && (
             <div className="text-center text-gray-500 py-8">
               <p>此文件夹中没有找到视频文件</p>
-              <button onClick={handleRescan} className="mt-3 text-sky-400 text-sm">重新扫描</button>
+              {isParentMode && <button onClick={handleRescan} className="mt-3 text-sky-400 text-sm">重新扫描</button>}
             </div>
           )}
           {videoTree.length > 0 && (
@@ -596,6 +610,7 @@ export default function PlanPage() {
           epPerDay={epPerDay}
           setEpPerDay={setEpPerDay}
           activating={activating}
+          isParentMode={isParentMode}
           onActivate={handleActivate}
           onDeactivate={async () => { await deactivatePlan(id); await loadPlan(); }}
           onPriorityChange={handleSavePriority}
@@ -614,7 +629,7 @@ export default function PlanPage() {
             若文件夹内确实有视频/音频，通常是这些文件已被<strong className="text-gray-500">上级目录（或其它）计划</strong>收录。
             每个文件只能属于一个计划，请删除重复的计划，或改用未被收录的文件夹。
           </p>
-          <button onClick={handleRescan} className="mt-4 text-sky-400 text-sm">重新扫描</button>
+          {isParentMode && <button onClick={handleRescan} className="mt-4 text-sky-400 text-sm">重新扫描</button>}
         </div>
       )}
     </div>

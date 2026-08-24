@@ -87,6 +87,7 @@ pub struct PlanWithCounts {
     pub next_video_duration: Option<i64>,
     pub next_video_sort_order: Option<i64>,
     pub next_video_media_type: Option<String>,
+    pub recent_videos: Vec<PlanPreviewVideo>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -134,6 +135,19 @@ struct NextVideoRow {
     media_type: String,
 }
 
+/// Up to 3 media items nearest the current learning position, shown on the plan list.
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct PlanPreviewVideo {
+    pub id: i64,
+    pub title: String,
+    pub status: String,
+    pub progress_seconds: i64,
+    pub duration_seconds: Option<i64>,
+    pub sort_order: i64,
+    pub media_type: String,
+    pub file_path: String,
+}
+
 async fn fetch_next_video(
     db: &sqlx::SqlitePool,
     plan_id: i64,
@@ -161,7 +175,55 @@ async fn fetch_next_video(
     }
 }
 
-fn build_plan_with_counts(r: PlanRow, next: Option<NextVideoRow>, is_locked_by_priority: bool) -> PlanWithCounts {
+async fn fetch_recent_videos(
+    db: &sqlx::SqlitePool,
+    plan_id: i64,
+) -> Result<Vec<PlanPreviewVideo>, String> {
+    let cursor: Option<i64> = sqlx::query_scalar(
+        "SELECT sort_order FROM videos
+         WHERE plan_id = ? AND status IN ('watching', 'not_watched')
+         ORDER BY CASE status WHEN 'watching' THEN 0 ELSE 1 END, sort_order ASC
+         LIMIT 1",
+    )
+    .bind(plan_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let cursor = match cursor {
+        Some(s) => s,
+        None => sqlx::query_scalar(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM videos WHERE plan_id = ?",
+        )
+        .bind(plan_id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| e.to_string())?,
+    };
+
+    let mut videos: Vec<PlanPreviewVideo> = sqlx::query_as(
+        "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
+         FROM videos
+         WHERE plan_id = ?
+         ORDER BY ABS(sort_order - ?), sort_order ASC
+         LIMIT 3",
+    )
+    .bind(plan_id)
+    .bind(cursor)
+    .fetch_all(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    videos.sort_by_key(|v| v.sort_order);
+    Ok(videos)
+}
+
+fn build_plan_with_counts(
+    r: PlanRow,
+    next: Option<NextVideoRow>,
+    is_locked_by_priority: bool,
+    recent_videos: Vec<PlanPreviewVideo>,
+) -> PlanWithCounts {
     PlanWithCounts {
         id: r.id,
         name: r.name,
@@ -185,6 +247,7 @@ fn build_plan_with_counts(r: PlanRow, next: Option<NextVideoRow>, is_locked_by_p
         next_video_duration: next.as_ref().and_then(|n| n.duration_seconds),
         next_video_sort_order: next.as_ref().map(|n| n.sort_order),
         next_video_media_type: next.as_ref().map(|n| n.media_type.clone()),
+        recent_videos,
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
@@ -416,6 +479,7 @@ pub async fn add_plan(
         next_video_duration: next.as_ref().and_then(|n| n.duration_seconds),
         next_video_sort_order: next.as_ref().map(|n| n.sort_order),
         next_video_media_type: next.as_ref().map(|n| n.media_type.clone()),
+        recent_videos: fetch_recent_videos(&state.db, plan_id).await?,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -492,7 +556,8 @@ pub async fn list_plans(state: State<'_, AppState>) -> Result<Vec<PlanWithCounts
     for r in rows {
         let is_locked = max_blocking > 0 && r.priority < max_blocking;
         let next = fetch_next_video(&state.db, r.id, &r.status).await?;
-        results.push(build_plan_with_counts(r, next, is_locked));
+        let recent = fetch_recent_videos(&state.db, r.id).await?;
+        results.push(build_plan_with_counts(r, next, is_locked, recent));
     }
     Ok(results)
 }
@@ -622,7 +687,8 @@ pub async fn rescan_plan(
     let skipped = found - owned_here;
 
     let next = fetch_next_video(&state.db, row.id, &row.status).await?;
-    let plan = build_plan_with_counts(row, next, false);
+    let recent = fetch_recent_videos(&state.db, row.id).await?;
+    let plan = build_plan_with_counts(row, next, false, recent);
     Ok(ScanReport {
         found,
         added: owned_here,
