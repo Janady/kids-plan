@@ -11,6 +11,7 @@ use super::CastState;
 use crate::commands::sessions::record_watch_tick;
 use crate::commands::videos::update_video_status;
 use crate::db::AppState;
+use crate::video_server::guess_mime;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_CONSECUTIVE_POLL_FAILURES: u32 = 3;
@@ -130,7 +131,14 @@ pub async fn run(
             },
         );
 
-        if let Err(e) = avtransport::set_av_transport_uri(&device, &media_url).await {
+        if let Err(e) = avtransport::set_av_transport_uri(
+            &device,
+            &media_url,
+            &item.title,
+            guess_mime(&item.file_path),
+        )
+        .await
+        {
             publish(&app, &snapshot, error_snapshot(&renderer_name, queue.clone(), e));
             break;
         }

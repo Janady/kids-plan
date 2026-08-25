@@ -377,7 +377,7 @@ fn url_decode(s: &str) -> String {
     String::from_utf8(bytes).unwrap_or_default()
 }
 
-fn guess_mime(path: &str) -> &'static str {
+pub(crate) fn guess_mime(path: &str) -> &'static str {
     match path
         .rsplit('.')
         .next()

@@ -69,10 +69,36 @@ async fn call(device: &RendererDevice, action: &str, args_xml: &str) -> Result<S
     Ok(String::from_utf8_lossy(&resp.body).into_owned())
 }
 
-pub async fn set_av_transport_uri(device: &RendererDevice, media_url: &str) -> Result<(), String> {
+// Builds the DIDL-Lite metadata UPnP renderers use to pick a decoder/layout
+// for the stream. Without a `protocolInfo` mime type here, some renderers
+// fall back to sniffing the container and occasionally misjudge orientation
+// (e.g. rendering a landscape video letterboxed into a portrait frame).
+fn didl_lite(title: &str, mime: &str) -> String {
+    format!(
+        "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" \
+         xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+         xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\">\
+         <item id=\"0\" parentID=\"-1\" restricted=\"1\">\
+         <dc:title>{}</dc:title>\
+         <upnp:class>object.item.videoItem</upnp:class>\
+         <res protocolInfo=\"http-get:*:{}:*\"></res>\
+         </item></DIDL-Lite>",
+        xml_escape(title),
+        mime
+    )
+}
+
+pub async fn set_av_transport_uri(
+    device: &RendererDevice,
+    media_url: &str,
+    title: &str,
+    mime: &str,
+) -> Result<(), String> {
+    let metadata = xml_escape(&didl_lite(title, mime));
     let args = format!(
-        "<InstanceID>0</InstanceID><CurrentURI>{}</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>",
-        xml_escape(media_url)
+        "<InstanceID>0</InstanceID><CurrentURI>{}</CurrentURI><CurrentURIMetaData>{}</CurrentURIMetaData>",
+        xml_escape(media_url),
+        metadata
     );
     call(device, "SetAVTransportURI", &args).await?;
     Ok(())
