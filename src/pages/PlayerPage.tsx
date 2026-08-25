@@ -69,6 +69,12 @@ export default function PlayerPage() {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors `video?.status` for callbacks (interval/unmount cleanup) whose
+  // dependency arrays are intentionally empty — a completed video is replayed
+  // from 0 and its progress is never persisted, so this must never fall back
+  // to a stale closure value of `video`.
+  const videoStatusRef = useRef<Video["status"] | null>(null);
+  useEffect(() => { videoStatusRef.current = video?.status ?? null; }, [video]);
 
   const { startSession, pauseSession, endSession } = useWatchSession(vId);
 
@@ -136,7 +142,7 @@ export default function PlayerPage() {
       if (!isAudio) notifyVideoPause();
       if (!isParentMode) {
         pauseSession();
-        if (el) updateVideoProgress(vId, Math.floor(el.currentTime));
+        if (el && videoStatusRef.current !== "watched") updateVideoProgress(vId, Math.floor(el.currentTime));
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -205,7 +211,10 @@ export default function PlayerPage() {
     const dur = (el as HTMLVideoElement).duration;
     if (isFinite(dur)) setDuration(Math.floor(dur));
 
-    if (video.progress_seconds > 0 && !resumeShownRef.current) {
+    // A completed item is replayed from the start — the recorded progress is
+    // stale end-of-video position, which would otherwise open a "finished"
+    // video paused at its own end.
+    if (video.status !== "watched" && video.progress_seconds > 0 && !resumeShownRef.current) {
       el.currentTime = video.progress_seconds;
       resumeShownRef.current = true;
       setResumedFrom(video.progress_seconds);
@@ -243,7 +252,7 @@ export default function PlayerPage() {
     if (!isParentMode) {
       await pauseSession();
       const el = mediaRef.current;
-      if (el) await updateVideoProgress(vId, Math.floor(el.currentTime));
+      if (el && videoStatusRef.current !== "watched") await updateVideoProgress(vId, Math.floor(el.currentTime));
     }
   }, [pauseSession, notifyVideoPause, vId, isParentMode, isAudio]);
 
@@ -277,7 +286,7 @@ export default function PlayerPage() {
     if (isParentMode) return;
     progressTimerRef.current = setInterval(async () => {
       const el = mediaRef.current;
-      if (el && !el.paused && !el.ended) {
+      if (el && !el.paused && !el.ended && videoStatusRef.current !== "watched") {
         await updateVideoProgress(vId, Math.floor(el.currentTime));
       }
     }, 5000);
@@ -296,7 +305,7 @@ export default function PlayerPage() {
     return () => {
       const el = mediaRef.current;
       pauseSession();
-      if (el && !el.paused && !el.ended) {
+      if (el && !el.paused && !el.ended && videoStatusRef.current !== "watched") {
         updateVideoProgress(vId, Math.floor(el.currentTime));
       }
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);

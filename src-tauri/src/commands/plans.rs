@@ -179,10 +179,43 @@ async fn fetch_recent_videos(
     db: &sqlx::SqlitePool,
     plan_id: i64,
 ) -> Result<Vec<PlanPreviewVideo>, String> {
-    let cursor: Option<i64> = sqlx::query_scalar(
+    let watching: Option<i64> = sqlx::query_scalar(
+        "SELECT sort_order FROM videos WHERE plan_id = ? AND status = 'watching'
+         ORDER BY sort_order ASC LIMIT 1",
+    )
+    .bind(plan_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Actively mid-episode: center the window on it (one before, it, one after)
+    // so the in-progress item and what's next are both visible.
+    if let Some(cursor) = watching {
+        let mut videos: Vec<PlanPreviewVideo> = sqlx::query_as(
+            "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
+             FROM videos
+             WHERE plan_id = ?
+             ORDER BY ABS(sort_order - ?), sort_order ASC
+             LIMIT 3",
+        )
+        .bind(plan_id)
+        .bind(cursor)
+        .fetch_all(db)
+        .await
+        .map_err(|e| e.to_string())?;
+        videos.sort_by_key(|v| v.sort_order);
+        return Ok(videos);
+    }
+
+    // Nothing actively playing — prefer the most-recently-watched episode as
+    // pivot, showing backward from it (e.g. finished up through 4 → show
+    // [2,3,4], not [4,5,6] into locked/upcoming content). Break ties by
+    // sort_order so a re-watch scenario (all "watched", same updated_at)
+    // picks the highest-numbered item rather than a random one.
+    let last_watched: Option<i64> = sqlx::query_scalar(
         "SELECT sort_order FROM videos
-         WHERE plan_id = ? AND status IN ('watching', 'not_watched')
-         ORDER BY CASE status WHEN 'watching' THEN 0 ELSE 1 END, sort_order ASC
+         WHERE plan_id = ? AND status = 'watched'
+         ORDER BY updated_at DESC, sort_order DESC
          LIMIT 1",
     )
     .bind(plan_id)
@@ -190,29 +223,33 @@ async fn fetch_recent_videos(
     .await
     .map_err(|e| e.to_string())?;
 
-    let cursor = match cursor {
-        Some(s) => s,
-        None => sqlx::query_scalar(
-            "SELECT COALESCE(MAX(sort_order), 0) FROM videos WHERE plan_id = ?",
+    let mut videos: Vec<PlanPreviewVideo> = if let Some(cursor) = last_watched {
+        sqlx::query_as(
+            "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
+             FROM videos
+             WHERE plan_id = ? AND sort_order <= ?
+             ORDER BY sort_order DESC
+             LIMIT 3",
         )
         .bind(plan_id)
-        .fetch_one(db)
+        .bind(cursor)
+        .fetch_all(db)
         .await
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string())?
+    } else {
+        // Nothing watched yet — show from the very start.
+        sqlx::query_as(
+            "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
+             FROM videos
+             WHERE plan_id = ?
+             ORDER BY sort_order ASC
+             LIMIT 3",
+        )
+        .bind(plan_id)
+        .fetch_all(db)
+        .await
+        .map_err(|e| e.to_string())?
     };
-
-    let mut videos: Vec<PlanPreviewVideo> = sqlx::query_as(
-        "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
-         FROM videos
-         WHERE plan_id = ?
-         ORDER BY ABS(sort_order - ?), sort_order ASC
-         LIMIT 3",
-    )
-    .bind(plan_id)
-    .bind(cursor)
-    .fetch_all(db)
-    .await
-    .map_err(|e| e.to_string())?;
 
     videos.sort_by_key(|v| v.sort_order);
     Ok(videos)
