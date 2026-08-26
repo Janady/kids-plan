@@ -3,7 +3,7 @@ import { useVideos } from "../hooks/useVideos";
 import { useAppContext } from "../context/AppContext";
 import {
   rescanPlan, deletePlan, activatePlan, deactivatePlan, listPlans, setPlanPriority,
-  setPlanBackground,
+  setPlanBackground, setPlanProtected,
 } from "../api/plans";
 import { useState, useEffect } from "react";
 import { canOpenPlanMedia } from "../components/PlanCard";
@@ -440,9 +440,21 @@ export default function PlanPage() {
   };
 
   const handleDelete = async () => {
+    if (plan?.is_protected) {
+      alert("该计划已受保护，请先取消保护后再删除");
+      return;
+    }
     if (!confirm("确认删除此计划？（不会删除磁盘上的文件）")) return;
     await deletePlan(id);
     navigate("/plans");
+  };
+
+  const handleToggleProtected = async () => {
+    if (!plan) return;
+    const next = plan.is_protected ? 0 : 1;
+    if (!next && !confirm("取消保护后，此计划及其文件可以被删除或清理。确认取消保护？")) return;
+    await setPlanProtected(id, next);
+    await loadPlan();
   };
 
   const handleActivate = async () => {
@@ -478,7 +490,22 @@ export default function PlanPage() {
             <button onClick={handleRescan} disabled={rescanning} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg transition-colors">
               {rescanning ? "扫描中…" : "重新扫描"}
             </button>
-            <button onClick={handleDelete} className="px-3 py-1.5 text-xs bg-red-900/60 hover:bg-red-800 rounded-lg transition-colors text-red-300">
+            <button
+              onClick={handleToggleProtected}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                plan?.is_protected
+                  ? "bg-amber-900/60 hover:bg-amber-800 text-amber-300"
+                  : "bg-gray-700 hover:bg-gray-600 text-gray-300"
+              }`}
+            >
+              {plan?.is_protected ? "🔒 已保护" : "🔓 保护"}
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={!!plan?.is_protected}
+              title={plan?.is_protected ? "已受保护，需先取消保护" : undefined}
+              className="px-3 py-1.5 text-xs bg-red-900/60 hover:bg-red-800 disabled:opacity-40 disabled:hover:bg-red-900/60 rounded-lg transition-colors text-red-300"
+            >
               删除
             </button>
           </div>
@@ -492,6 +519,7 @@ export default function PlanPage() {
             {plan.video_count > 0 && <span>🎬 {plan.video_count} 视频</span>}
             {plan.audio_count > 0 && <span>🎵 {plan.audio_count} 音频</span>}
             {plan.is_background === 1 && <span className="text-purple-400">· 🎶 背景音乐</span>}
+            {plan.is_protected === 1 && <span className="text-amber-400">· 🔒 已保护</span>}
             {plan.watched_count > 0 && <span>· {plan.watched_count} 已完成</span>}
           </div>
         </div>

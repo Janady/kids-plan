@@ -117,6 +117,7 @@ pub fn run() {
             get_recent_background_tracks,
             delete_background_track,
             set_plan_background,
+            set_plan_protected,
             list_videos_for_plan,
             update_video_status,
             mark_video_watched_earlier,

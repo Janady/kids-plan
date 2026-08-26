@@ -27,6 +27,7 @@ export interface Plan {
   scan_audio: number; // 0|1
   audio_role: AudioRole;
   is_background: number; // 0|1 — audio files also appear in background player
+  is_protected: number; // 0|1 — plan and its files cannot be deleted/cleaned up
   is_locked_by_priority: boolean;
   video_count: number;  // only video files
   audio_count: number;  // only audio files

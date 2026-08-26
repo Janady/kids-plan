@@ -263,7 +263,7 @@ pub async fn list_completed_for_cleanup(
         "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path
          FROM videos v
          JOIN plans p ON p.id = v.plan_id
-         WHERE v.status = 'watched' AND v.media_type = 'video'
+         WHERE v.status = 'watched' AND v.media_type = 'video' AND p.is_protected = 0
          ORDER BY p.updated_at DESC, v.sort_order ASC",
     )
     .fetch_all(&state.db)
@@ -316,17 +316,23 @@ pub async fn cleanup_videos(
     let mut failed: Vec<String> = Vec::new();
 
     for id in video_ids {
-        let row: Option<(String, String, String)> =
-            sqlx::query_as("SELECT file_path, status, title FROM videos WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(|e| e.to_string())?;
+        let row: Option<(String, String, String, i64)> = sqlx::query_as(
+            "SELECT v.file_path, v.status, v.title, p.is_protected
+             FROM videos v JOIN plans p ON p.id = v.plan_id WHERE v.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
 
-        let (file_path, status, title) = match row {
+        let (file_path, status, title, is_protected) = match row {
             Some(r) => r,
             None => continue,
         };
+        if is_protected != 0 {
+            failed.push(format!("{title}: 计划已受保护，跳过"));
+            continue;
+        }
         // Only completed videos may be cleaned up
         if status != "watched" {
             failed.push(format!("{title}: 未完成，跳过"));

@@ -59,6 +59,7 @@ pub struct Plan {
     pub scan_audio: i64,
     pub audio_role: String,
     pub is_background: i64, // 1 = audio files also appear in background player
+    pub is_protected: i64,  // 1 = plan and its files cannot be deleted/cleaned up
     pub created_at: String,
     pub updated_at: String,
 }
@@ -76,6 +77,7 @@ pub struct PlanWithCounts {
     pub scan_audio: i64,
     pub audio_role: String,
     pub is_background: i64,
+    pub is_protected: i64,
     pub is_locked_by_priority: bool,
     pub video_count: i64,
     pub audio_count: i64,
@@ -117,6 +119,7 @@ struct PlanRow {
     scan_audio: i64,
     audio_role: String,
     is_background: i64,
+    is_protected: i64,
     video_count: i64,
     audio_count: i64,
     watched_count: i64,
@@ -273,6 +276,7 @@ fn build_plan_with_counts(
         scan_audio: r.scan_audio,
         audio_role: r.audio_role,
         is_background: r.is_background,
+        is_protected: r.is_protected,
         is_locked_by_priority,
         video_count: r.video_count,
         audio_count: r.audio_count,
@@ -393,7 +397,7 @@ fn scan_media_files(
 
 const PLAN_SELECT: &str =
     "SELECT p.id, p.name, p.folder_path, p.status, p.episodes_per_day, p.daily_schedule_active,
-            p.priority, p.scan_video, p.scan_audio, p.audio_role, p.is_background, p.created_at, p.updated_at,
+            p.priority, p.scan_video, p.scan_audio, p.audio_role, p.is_background, p.is_protected, p.created_at, p.updated_at,
             COUNT(CASE WHEN v.media_type = 'video' THEN 1 END) as video_count,
             COUNT(CASE WHEN v.media_type = 'audio' THEN 1 END) as audio_count,
             COALESCE(SUM(CASE WHEN v.status = 'watched' THEN 1 ELSE 0 END), 0) as watched_count
@@ -505,6 +509,7 @@ pub async fn add_plan(
         scan_audio: sa,
         audio_role: ar,
         is_background: 0,
+        is_protected: 0,
         is_locked_by_priority: false,
         video_count,
         audio_count,
@@ -601,6 +606,15 @@ pub async fn list_plans(state: State<'_, AppState>) -> Result<Vec<PlanWithCounts
 
 #[tauri::command]
 pub async fn delete_plan(state: State<'_, AppState>, plan_id: i64) -> Result<(), String> {
+    let (is_protected,): (i64,) = sqlx::query_as("SELECT is_protected FROM plans WHERE id = ?")
+        .bind(plan_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    if is_protected != 0 {
+        return Err("该计划已受保护，无法删除。请先取消保护".to_string());
+    }
+
     sqlx::query("DELETE FROM plans WHERE id = ?")
         .bind(plan_id)
         .execute(&state.db)
@@ -939,6 +953,22 @@ pub async fn set_plan_background(
 ) -> Result<(), String> {
     sqlx::query("UPDATE plans SET is_background = ?, updated_at = ? WHERE id = ?")
         .bind(is_background)
+        .bind(now_str())
+        .bind(plan_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_plan_protected(
+    state: State<'_, AppState>,
+    plan_id: i64,
+    is_protected: i64,
+) -> Result<(), String> {
+    sqlx::query("UPDATE plans SET is_protected = ?, updated_at = ? WHERE id = ?")
+        .bind(is_protected)
         .bind(now_str())
         .bind(plan_id)
         .execute(&state.db)
