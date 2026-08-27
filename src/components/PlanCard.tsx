@@ -30,6 +30,13 @@ function formatTime(s: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+// JS Date.getDay() is 0=Sunday..6=Saturday; convert to 0=Monday..6=Sunday to
+// match the backend's weekly_schedule index (chrono's num_days_from_monday()).
+function todayEpisodeQuota(plan: Plan): number {
+  const idx = (new Date().getDay() + 6) % 7;
+  return plan.weekly_schedule[idx]?.episodes ?? plan.episodes_per_day;
+}
+
 export function canOpenPlanMedia(isParentMode: boolean, status: VideoStatus): boolean {
   return isParentMode || status === "watched";
 }
@@ -91,7 +98,7 @@ export function PlanCard({ plan }: Props) {
           )}
           {!!plan.daily_schedule_active && (
             <span className="bg-sky-800/60 text-sky-300 px-1.5 py-0.5 rounded">
-              每日{plan.episodes_per_day}集
+              今日{todayEpisodeQuota(plan)}集
             </span>
           )}
           <span>{plan.watched_count}/{total} 已完成</span>

@@ -34,8 +34,9 @@ function todaySetting(plan: Plan): WeekdaySetting {
   return plan.weekly_schedule[todayWeekdayIdx()] ?? { episodes: plan.episodes_per_day, blank_minutes: 0 };
 }
 
-function WeeklyScheduleEditor({ plan, onSave }: { plan: Plan; onSave: (schedule: WeekdaySetting[]) => Promise<void> }) {
-  const [expanded, setExpanded] = useState(false);
+function WeeklyScheduleEditor({
+  plan, onSave, expanded,
+}: { plan: Plan; onSave: (schedule: WeekdaySetting[]) => Promise<void>; expanded: boolean }) {
   const [rows, setRows] = useState<WeekdaySetting[]>(plan.weekly_schedule);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -57,53 +58,45 @@ function WeeklyScheduleEditor({ plan, onSave }: { plan: Plan; onSave: (schedule:
     }
   };
 
+  if (!expanded) return null;
+
   return (
-    <div className="mb-4">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
-      >
-        {expanded ? "▼" : "▶"} 高级设置（按星期设置集数与空白练习）
-      </button>
-      {expanded && (
-        <div className="mt-2 space-y-2 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg">
-          {rows.map((row, i) => (
-            <div key={i} className="flex items-center gap-3 px-3 py-2 bg-gray-700/50 rounded-lg">
-              <span className="text-xs text-gray-300 w-10 shrink-0">{WEEKDAY_LABELS[i]}</span>
-              <div className="flex items-center gap-1">
-                <input
-                  type="number"
-                  min={0}
-                  value={row.episodes}
-                  onChange={(e) => updateRow(i, { episodes: Math.max(0, Number(e.target.value) || 0) })}
-                  className="w-14 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
-                />
-                <span className="text-[10px] text-gray-500 shrink-0">集</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <input
-                  type="number"
-                  min={0}
-                  max={60}
-                  value={row.blank_minutes}
-                  onChange={(e) => updateRow(i, { blank_minutes: Math.min(60, Math.max(0, Number(e.target.value) || 0)) })}
-                  className="w-14 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
-                />
-                <span className="text-[10px] text-gray-500 shrink-0">分钟空白练习</span>
-              </div>
-            </div>
-          ))}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              saved ? "bg-green-700 text-green-200" : "bg-sky-600 hover:bg-sky-500 text-white"
-            }`}
-          >
-            {saved ? "已保存 ✓" : saving ? "保存中…" : "保存"}
-          </button>
+    <div className="mb-4 mt-2 space-y-2 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+      {rows.map((row, i) => (
+        <div key={i} className="flex items-center gap-3 px-3 py-2 bg-gray-700/50 rounded-lg">
+          <span className="text-xs text-gray-300 w-10 shrink-0">{WEEKDAY_LABELS[i]}</span>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min={0}
+              value={row.episodes}
+              onChange={(e) => updateRow(i, { episodes: Math.max(0, Number(e.target.value) || 0) })}
+              className="w-14 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
+            />
+            <span className="text-[10px] text-gray-500 shrink-0">集</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              min={0}
+              max={60}
+              value={row.blank_minutes}
+              onChange={(e) => updateRow(i, { blank_minutes: Math.min(60, Math.max(0, Number(e.target.value) || 0)) })}
+              className="w-14 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
+            />
+            <span className="text-[10px] text-gray-500 shrink-0">分钟空白练习</span>
+          </div>
         </div>
-      )}
+      ))}
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${
+          saved ? "bg-green-700 text-green-200" : "bg-sky-600 hover:bg-sky-500 text-white"
+        }`}
+      >
+        {saved ? "已保存 ✓" : saving ? "保存中…" : "保存"}
+      </button>
     </div>
   );
 }
@@ -337,15 +330,13 @@ function VideoTreeLevel({
 // ─── Audio tab ────────────────────────────────────────────────────────────────
 
 function AudioTab({
-  videos, planId, plan, epPerDay, setEpPerDay, activating, isParentMode,
+  videos, planId, plan, activating, isParentMode,
   onActivate, onDeactivate, onPriorityChange, onBackgroundToggle, onSaveWeeklySchedule,
   onAdjustReps, onBatchAdjustReps,
 }: {
   videos: Video[];
   planId: number;
   plan: Plan;
-  epPerDay: number;
-  setEpPerDay: (n: number) => void;
   activating: boolean;
   isParentMode: boolean;
   onActivate: () => void;
@@ -359,6 +350,7 @@ function AudioTab({
   const navigate = useNavigate();
   const { bgAudioPlans, bgSetTrack, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying } = useAppContext();
   const [togglingBg, setTogglingBg] = useState(false);
+  const [scheduleExpanded, setScheduleExpanded] = useState(false);
 
   const audioFiles = [...videos]
     .filter((v) => v.media_type === "audio")
@@ -426,12 +418,10 @@ function AudioTab({
             {today.blank_minutes > 0 && ` · 📝 空白练习 ${today.blank_minutes} 分钟`}
           </span>
           <div className="ml-auto flex items-center gap-2">
-            <select value={epPerDay} onChange={(e) => setEpPerDay(Number(e.target.value))}
-              className="bg-gray-800 border border-gray-600 rounded text-xs text-gray-300 px-2 py-1 outline-none">
-              {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n} 集/天</option>)}
-            </select>
-            <button onClick={onActivate} disabled={activating || epPerDay === plan.episodes_per_day}
-              className="text-xs px-2 py-1 bg-sky-700 hover:bg-sky-600 disabled:opacity-40 rounded transition-colors">更新</button>
+            <button onClick={() => setScheduleExpanded((v) => !v)}
+              className="text-xs px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded transition-colors">
+              {scheduleExpanded ? "收起每日设置" : "修改每日设置"}
+            </button>
             <button onClick={onDeactivate}
               className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors text-gray-400">退出</button>
           </div>
@@ -439,21 +429,17 @@ function AudioTab({
       ) : (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border border-dashed border-gray-700 rounded-lg">
           <span className="text-gray-500 text-sm">未加入每日计划</span>
-          <div className="ml-auto flex items-center gap-2">
-            <select value={epPerDay} onChange={(e) => setEpPerDay(Number(e.target.value))}
-              className="bg-gray-800 border border-gray-600 rounded text-xs text-gray-300 px-2 py-1 outline-none">
-              {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n} 集</option>)}
-            </select>
+          <div className="ml-auto">
             <button onClick={onActivate} disabled={activating}
               className="text-xs px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition-colors font-medium">
-              {activating ? "启动中…" : "加入每日计划"}
+              {activating ? "启动中…" : "开始计划"}
             </button>
           </div>
         </div>
       ))}
 
-      {isParentMode && (
-        <WeeklyScheduleEditor plan={plan} onSave={onSaveWeeklySchedule} />
+      {isParentMode && plan.daily_schedule_active === 1 && (
+        <WeeklyScheduleEditor plan={plan} onSave={onSaveWeeklySchedule} expanded={scheduleExpanded} />
       )}
 
       {/* Audio file list */}
@@ -553,9 +539,9 @@ export default function PlanPage() {
   const { isLimitExceeded, isParentMode, bgRefreshPlans } = useAppContext();
   const [rescanning, setRescanning] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [epPerDay, setEpPerDay] = useState(1);
   const [activating, setActivating] = useState(false);
   const [priority, setPriority] = useState(0);
+  const [scheduleExpanded, setScheduleExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"video" | "audio">("video");
   const [scanNotice, setScanNotice] = useState<string | null>(
     (location.state as { scanNotice?: string } | null)?.scanNotice ?? null,
@@ -566,7 +552,6 @@ export default function PlanPage() {
     const found = all.find((p) => p.id === id) ?? null;
     setPlan(found);
     if (found) {
-      setEpPerDay(found.episodes_per_day);
       setPriority(found.priority);
     }
   };
@@ -620,7 +605,7 @@ export default function PlanPage() {
 
   const handleActivate = async () => {
     setActivating(true);
-    try { await activatePlan(id, epPerDay); await loadPlan(); } finally { setActivating(false); }
+    try { await activatePlan(id, 1); await loadPlan(); } finally { setActivating(false); }
   };
 
   const handleSavePriority = async (p: number) => {
@@ -775,29 +760,26 @@ export default function PlanPage() {
                 {todaySetting(plan).blank_minutes > 0 && ` · 📝 空白练习 ${todaySetting(plan).blank_minutes} 分钟`}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                <select value={epPerDay} onChange={(e) => setEpPerDay(Number(e.target.value))} className="bg-gray-800 border border-gray-600 rounded text-xs text-gray-300 px-2 py-1 outline-none">
-                  {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n} 集/天</option>)}
-                </select>
-                <button onClick={handleActivate} disabled={activating || epPerDay === plan.episodes_per_day} className="text-xs px-2 py-1 bg-sky-700 hover:bg-sky-600 disabled:opacity-40 rounded transition-colors">更新</button>
+                <button onClick={() => setScheduleExpanded((v) => !v)}
+                  className="text-xs px-2 py-1 bg-sky-700 hover:bg-sky-600 rounded transition-colors">
+                  {scheduleExpanded ? "收起每日设置" : "修改每日设置"}
+                </button>
                 <button onClick={async () => { await deactivatePlan(id); await loadPlan(); }} className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors text-gray-400">退出</button>
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/50 border border-dashed border-gray-700 rounded-lg mb-4">
               <span className="text-gray-500 text-sm">未加入每日计划</span>
-              <div className="ml-auto flex items-center gap-2">
-                <select value={epPerDay} onChange={(e) => setEpPerDay(Number(e.target.value))} className="bg-gray-800 border border-gray-600 rounded text-xs text-gray-300 px-2 py-1 outline-none">
-                  {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n} 集</option>)}
-                </select>
+              <div className="ml-auto">
                 <button onClick={handleActivate} disabled={activating} className="text-xs px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg transition-colors font-medium">
-                  {activating ? "启动中…" : "加入每日计划"}
+                  {activating ? "启动中…" : "开始计划"}
                 </button>
               </div>
             </div>
           ))}
 
-          {isParentMode && (
-            <WeeklyScheduleEditor plan={plan} onSave={handleSaveWeeklySchedule} />
+          {isParentMode && plan.daily_schedule_active === 1 && (
+            <WeeklyScheduleEditor plan={plan} onSave={handleSaveWeeklySchedule} expanded={scheduleExpanded} />
           )}
 
           {loading && <div className="text-center text-gray-500 py-8">加载中…</div>}
@@ -822,8 +804,6 @@ export default function PlanPage() {
           videos={videos}
           planId={id}
           plan={plan}
-          epPerDay={epPerDay}
-          setEpPerDay={setEpPerDay}
           activating={activating}
           isParentMode={isParentMode}
           onActivate={handleActivate}

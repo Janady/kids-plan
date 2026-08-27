@@ -20,6 +20,7 @@ export default function BlankPracticePage() {
   const [running, setRunning] = useState(false);
   const [completing, setCompleting] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoStartedRef = useRef(false);
 
   // Fall back to today's schedule when minutes isn't in the URL.
   useEffect(() => {
@@ -32,6 +33,14 @@ export default function BlankPracticePage() {
 
   useEffect(() => {
     if (minutes !== null) setRemaining(minutes * 60);
+  }, [minutes]);
+
+  // Starts on its own once the duration is known — no manual "开始" step.
+  useEffect(() => {
+    if (minutes !== null && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      setRunning(true);
+    }
   }, [minutes]);
 
   const handleComplete = useCallback(async () => {
@@ -87,29 +96,22 @@ export default function BlankPracticePage() {
       </div>
 
       <div className="flex items-center gap-4">
-        {!running ? (
-          <button
-            onClick={() => setRunning(true)}
-            disabled={remaining <= 0}
-            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-lg text-white font-medium transition-colors"
-          >
-            开始
-          </button>
-        ) : (
+        {running ? (
           <button
             onClick={() => setRunning(false)}
             className="px-6 py-3 bg-emerald-800 hover:bg-emerald-700 rounded-lg text-white font-medium transition-colors"
           >
             暂停
           </button>
+        ) : (
+          <button
+            onClick={() => setRunning(true)}
+            disabled={remaining <= 0 || completing}
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-lg text-white font-medium transition-colors"
+          >
+            继续
+          </button>
         )}
-        <button
-          onClick={handleComplete}
-          disabled={completing}
-          className="px-6 py-3 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-emerald-200 font-medium transition-colors"
-        >
-          {completing ? "完成中…" : "完成练习"}
-        </button>
       </div>
     </div>
   );
