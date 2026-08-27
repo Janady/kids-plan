@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Plan, BackgroundAudioPlan, BackgroundTrack, ScanReport } from "../types";
+import type { Plan, BackgroundAudioPlan, BackgroundTrack, ScanReport, WeekdaySetting } from "../types";
 
 export const addPlan = (
   folderPath: string,
@@ -23,6 +23,13 @@ export const deactivatePlan = (planId: number): Promise<void> =>
 
 export const setPlanPriority = (planId: number, priority: number): Promise<void> =>
   invoke("set_plan_priority", { planId, priority });
+
+export const setPlanWeeklySchedule = (
+  planId: number,
+  schedule: WeekdaySetting[],
+): Promise<void> =>
+  invoke("set_plan_weekly_schedule", { planId, schedule: JSON.stringify(schedule) });
+
 
 export const updatePlanMediaSettings = (
   planId: number,

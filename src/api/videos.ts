@@ -13,6 +13,16 @@ export const updateVideoStatus = (
 export const markVideoWatchedEarlier = (videoId: number): Promise<Video> =>
   invoke("mark_video_watched_earlier", { videoId });
 
+export const adjustVideoReps = (videoId: number, delta: number): Promise<Video> =>
+  invoke("adjust_video_reps", { videoId, delta });
+
+export const batchAdjustPlanReps = (planId: number, delta: number): Promise<void> =>
+  invoke("batch_adjust_plan_reps", { planId, delta });
+
+// Credit one playback rep; marks the video watched once required_reps is met.
+export const completeVideoRep = (videoId: number): Promise<Video> =>
+  invoke("complete_video_rep", { videoId });
+
 export const updateVideoProgress = (
   videoId: number,
   progressSeconds: number

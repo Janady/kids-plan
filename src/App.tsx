@@ -15,6 +15,7 @@ import SettingsPage from "./pages/SettingsPage";
 import StatsPage from "./pages/StatsPage";
 import BackgroundAudioPage from "./pages/BackgroundAudioPage";
 import CleanupPage from "./pages/CleanupPage";
+import BlankPracticePage from "./pages/BlankPracticePage";
 import { usePlatform } from "./hooks/usePlatform";
 import { useAppContext } from "./context/AppContext";
 
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/plan/:planId" element={<PlanPage />} />
           <Route path="/plan/:planId/video/:videoId" element={<PlayerPage />} />
+          <Route path="/plan/:planId/blank-practice" element={<BlankPracticePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/stats" element={<StatsPage />} />
           <Route path="/background-audio" element={<BackgroundAudioPage />} />

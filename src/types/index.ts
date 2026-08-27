@@ -4,6 +4,11 @@ export type MediaType = "video" | "audio";
 export type AudioRole = "plan" | "background";
 export type LoopMode = "shuffle" | "track" | "all";
 
+export interface WeekdaySetting {
+  episodes: number;
+  blank_minutes: number;
+}
+
 export interface PlanPreviewVideo {
   id: number;
   title: string;
@@ -28,6 +33,7 @@ export interface Plan {
   audio_role: AudioRole;
   is_background: number; // 0|1 — audio files also appear in background player
   is_protected: number; // 0|1 — plan and its files cannot be deleted/cleaned up
+  weekly_schedule: WeekdaySetting[]; // length 7, index 0=Monday..6=Sunday
   is_locked_by_priority: boolean;
   video_count: number;  // only video files
   audio_count: number;  // only audio files
@@ -54,6 +60,9 @@ export interface Video {
   progress_seconds: number;
   sort_order: number;
   media_type: MediaType;
+  required_reps: number;
+  completed_reps: number;
+  last_rep_date: string | null;
   updated_at: string;
   file_exists: boolean; // false = file cleaned up / missing on disk
 }
@@ -94,6 +103,8 @@ export interface TodayPendingItem {
   video_duration: number | null;
   sort_order: number;
   media_type: MediaType;
+  required_reps: number;
+  completed_reps: number;
 }
 
 export interface TodayDoneItem {
@@ -102,12 +113,19 @@ export interface TodayDoneItem {
   sort_order: number;
 }
 
+export interface TodayBlankPractice {
+  plan_id: number;
+  minutes: number;
+  completed: boolean;
+}
+
 export interface TodayPlanItem {
   plan_id: number;
   plan_name: string;
   episodes_per_day: number;
   pending: TodayPendingItem[];
   done_today: TodayDoneItem[];
+  blank_practice: TodayBlankPractice | null;
 }
 
 export interface BlockedTimeRange {

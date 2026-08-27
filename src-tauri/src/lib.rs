@@ -8,7 +8,7 @@ use cast::{cast_pause, cast_resume, cast_stop, cast_switch_video, discover_rende
 use commands::{plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
 use db::AppState;
 use thumbnail_cache::{cache_thumbnail, get_cached_thumbnail};
-use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::SqlitePool;
 use std::str::FromStr;
 use tauri::Manager;
@@ -78,7 +78,14 @@ pub fn run() {
             let pool = tauri::async_runtime::block_on(async move {
                 let options = SqliteConnectOptions::from_str(&db_url)
                     .expect("Invalid DB URL")
-                    .create_if_missing(true);
+                    .create_if_missing(true)
+                    // WAL lets readers and the writer proceed concurrently instead of
+                    // blocking each other; busy_timeout makes a writer *wait* for a
+                    // few seconds on lock contention between concurrent connections
+                    // (progress-save interval, watch ticks, rep completion, etc.)
+                    // instead of immediately failing with "database is locked".
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .busy_timeout(std::time::Duration::from_secs(10));
 
                 let pool = SqlitePool::connect_with(options)
                     .await
@@ -138,6 +145,11 @@ pub fn run() {
             get_plan_time_stats,
             get_overall_stats,
             set_plan_priority,
+            set_plan_weekly_schedule,
+            adjust_video_reps,
+            batch_adjust_plan_reps,
+            complete_video_rep,
+            complete_blank_practice,
             discover_renderers,
             start_cast,
             cast_pause,

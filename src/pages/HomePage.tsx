@@ -349,6 +349,13 @@ function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardP
           <div className="text-[10px] text-gray-600">{formatTime(task.video_duration)}</div>
         ) : null}
 
+        {task.required_reps > 1 && (
+          <div className="text-[10px] text-sky-400 mt-1">
+            还需练习 {task.required_reps - task.completed_reps} 次
+            {task.completed_reps > 0 && " · 今日已计入，明天继续"}
+          </div>
+        )}
+
         {/* Mark as already-watched (skip without using today's quota) */}
         {!isLocked && allowSkipPlayback && (
           <button
@@ -363,6 +370,30 @@ function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardP
             ✓ 之前已看过
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Blank practice card ──────────────────────────────────────────────────────
+
+function BlankPracticeCard({ planId, planName, minutes }: { planId: number; planName: string; minutes: number }) {
+  const navigate = useNavigate();
+  return (
+    <div
+      onClick={() => navigate(`/plan/${planId}/blank-practice?minutes=${minutes}`)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") navigate(`/plan/${planId}/blank-practice?minutes=${minutes}`); }}
+      tabIndex={0}
+      role="button"
+      className="group rounded-xl overflow-hidden border border-emerald-800/50 bg-emerald-900/20 hover:border-emerald-500 cursor-pointer transition-all hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-gray-950"
+    >
+      <div className="relative aspect-video bg-emerald-950/40 flex items-center justify-center">
+        <span className="text-4xl">📝</span>
+      </div>
+      <div className="px-3 pt-2.5 pb-3">
+        <div className="text-[10px] font-medium truncate mb-1 text-emerald-400">{planName}</div>
+        <div className="text-sm font-medium text-gray-200 line-clamp-2 leading-snug mb-1.5">空白练习</div>
+        <div className="text-[10px] text-emerald-400">{minutes} 分钟</div>
       </div>
     </div>
   );
@@ -413,8 +444,11 @@ export default function HomePage() {
     item.done_today.map((d) => ({ ...d, planName: item.plan_name }))
   );
 
+  const pendingBlankPractices = todayItems.filter((item) => item.blank_practice && !item.blank_practice.completed);
+  const completedBlankPractices = todayItems.filter((item) => item.blank_practice?.completed);
+
   const hasActivePlans = todayItems.length > 0;
-  const allDoneToday = hasActivePlans && allPendingTasks.length === 0;
+  const allDoneToday = hasActivePlans && allPendingTasks.length === 0 && pendingBlankPractices.length === 0;
 
   // Cast queue: same flattened order as allPendingTasks above (plan priority,
   // then within-plan sort order — get_today_schedule already returns it that
@@ -547,12 +581,20 @@ export default function HomePage() {
                 onMarkWatched={handleMarkWatched}
               />
             ))}
+            {pendingBlankPractices.map((item) => (
+              <BlankPracticeCard
+                key={`blank-${item.plan_id}`}
+                planId={item.plan_id}
+                planName={item.plan_name}
+                minutes={item.blank_practice!.minutes}
+              />
+            ))}
           </div>
         </div>
       )}
 
       {/* ── Completed today (hidden in parent mode) ── */}
-      {!isParentMode && completedItems.length > 0 && (
+      {!isParentMode && (completedItems.length > 0 || completedBlankPractices.length > 0) && (
         <div className="mb-8">
           <h2 className="text-xs font-semibold text-green-600 uppercase tracking-wider mb-3">
             今日已完成 ✓
@@ -566,6 +608,16 @@ export default function HomePage() {
                 <span className="text-green-500 text-sm">✓</span>
                 <span className="text-xs text-gray-500 shrink-0">{d.planName}</span>
                 <span className="flex-1 text-sm text-gray-400 truncate">{d.video_title}</span>
+              </div>
+            ))}
+            {completedBlankPractices.map((item) => (
+              <div
+                key={`blank-${item.plan_id}`}
+                className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/40 border border-gray-700/40 rounded-lg"
+              >
+                <span className="text-green-500 text-sm">✓</span>
+                <span className="text-xs text-gray-500 shrink-0">{item.plan_name}</span>
+                <span className="flex-1 text-sm text-gray-400 truncate">📝 空白练习已完成</span>
               </div>
             ))}
           </div>

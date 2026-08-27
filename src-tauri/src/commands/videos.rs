@@ -18,6 +18,9 @@ pub struct Video {
     pub progress_seconds: i64,
     pub sort_order: i64,
     pub media_type: String,
+    pub required_reps: i64,
+    pub completed_reps: i64,
+    pub last_rep_date: Option<String>,
     pub updated_at: String,
     // Not a DB column — filled after query by checking the disk.
     // false means the file was cleaned up (or is otherwise missing).
@@ -38,7 +41,7 @@ pub async fn list_videos_for_plan(
 ) -> Result<Vec<Video>, String> {
     let mut videos: Vec<Video> = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
-                progress_seconds, sort_order, media_type, updated_at
+                progress_seconds, sort_order, media_type, required_reps, completed_reps, last_rep_date, updated_at
          FROM videos
          WHERE plan_id = ?
          ORDER BY
@@ -63,16 +66,20 @@ pub async fn list_videos_for_plan(
 
 // Recompute and persist a plan's overall status from its videos.
 // Background-music audio is excluded so a mixed plan can still reach "completed".
-async fn recompute_plan_status(
+// A plan can only be "completed" once every day's blank-practice minutes is 0 —
+// non-zero blank practice is a recurring daily task with no end state, so a
+// plan that still asks for it can never be considered fully done.
+pub(crate) async fn recompute_plan_status(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     plan_id: i64,
     now: &str,
 ) -> Result<(), String> {
-    let (is_background,): (i64,) = sqlx::query_as("SELECT is_background FROM plans WHERE id = ?")
-        .bind(plan_id)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(|e| e.to_string())?;
+    let (is_background, weekly_schedule): (i64, String) =
+        sqlx::query_as("SELECT is_background, weekly_schedule FROM plans WHERE id = ?")
+            .bind(plan_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| e.to_string())?;
 
     let (total, watched, not_watched): (i64, i64, i64) = sqlx::query_as(
         "SELECT
@@ -88,7 +95,8 @@ async fn recompute_plan_status(
     .await
     .map_err(|e| e.to_string())?;
 
-    let plan_status = if total > 0 && watched == total {
+    let blank_all_zero = crate::commands::plans::weekly_blank_all_zero(&weekly_schedule);
+    let plan_status = if total > 0 && watched == total && blank_all_zero {
         "completed"
     } else if total > 0 && not_watched == total {
         "not_started"
@@ -109,7 +117,7 @@ async fn recompute_plan_status(
 async fn fetch_video(db: &sqlx::SqlitePool, video_id: i64) -> Result<Video, String> {
     let mut v: Video = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
-                progress_seconds, sort_order, media_type, updated_at
+                progress_seconds, sort_order, media_type, required_reps, completed_reps, last_rep_date, updated_at
          FROM videos WHERE id = ?",
     )
     .bind(video_id)
@@ -118,6 +126,23 @@ async fn fetch_video(db: &sqlx::SqlitePool, video_id: i64) -> Result<Video, Stri
     .map_err(|e| e.to_string())?;
     v.file_exists = file_present(&v.file_path);
     Ok(v)
+}
+
+// Single source of truth for deriving `status` from required/completed reps.
+// required <= completed (including required == 0) always means "watched" —
+// nothing left to do. Otherwise, if the row was "watched" only because the
+// requirement used to be lower/zero, it must be downgraded now that more
+// reps are required: "watching" if at least one rep was already banked,
+// "not_watched" if none were. A row that wasn't "watched" is left as-is —
+// increasing its requirement shouldn't disturb in-progress playback state.
+fn derive_reps_status(required_reps: i64, completed_reps: i64, prior_status: &str) -> String {
+    if completed_reps >= required_reps {
+        "watched".to_string()
+    } else if prior_status == "watched" {
+        if completed_reps > 0 { "watching".to_string() } else { "not_watched".to_string() }
+    } else {
+        prior_status.to_string()
+    }
 }
 
 #[tauri::command]
@@ -162,14 +187,163 @@ pub async fn mark_video_watched_earlier(
     let now = now_str();
     // A fixed past timestamp — never matches date('now','localtime')
     const PAST: &str = "1970-01-01T00:00:00+00:00";
+    let today = Local::now().format("%Y-%m-%d").to_string();
     let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
 
-    sqlx::query("UPDATE videos SET status = 'watched', updated_at = ? WHERE id = ?")
-        .bind(PAST)
+    // completed_reps is also forced to required_reps so this video doesn't
+    // reappear as "still needs more reps" the next time it's evaluated.
+    sqlx::query(
+        "UPDATE videos SET status = 'watched', completed_reps = required_reps,
+                last_rep_date = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&today)
+    .bind(PAST)
+    .bind(video_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (plan_id,): (i64,) = sqlx::query_as("SELECT plan_id FROM videos WHERE id = ?")
+        .bind(video_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    recompute_plan_status(&mut tx, plan_id, &now).await?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    fetch_video(&state.db, video_id).await
+}
+
+// Adjust how many times a video must be played to count as complete.
+// Clamped at 0 (never negative). If the new requirement is already met by
+// completed_reps — including being lowered all the way to 0 — the video is
+// marked complete immediately.
+#[tauri::command]
+pub async fn adjust_video_reps(
+    state: State<'_, AppState>,
+    video_id: i64,
+    delta: i64,
+) -> Result<Video, String> {
+    let now = now_str();
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+
+    let (required_reps, completed_reps): (i64, i64) = sqlx::query_as(
+        "SELECT required_reps, completed_reps FROM videos WHERE id = ?",
+    )
+    .bind(video_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let new_required = (required_reps + delta).max(0);
+    let (plan_id, status): (i64, String) = sqlx::query_as(
+        "SELECT plan_id, status FROM videos WHERE id = ?",
+    )
+    .bind(video_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let new_status = derive_reps_status(new_required, completed_reps, &status);
+
+    sqlx::query("UPDATE videos SET required_reps = ?, status = ?, updated_at = ? WHERE id = ?")
+        .bind(new_required)
+        .bind(&new_status)
+        .bind(&now)
         .bind(video_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+
+    recompute_plan_status(&mut tx, plan_id, &now).await?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    fetch_video(&state.db, video_id).await
+}
+
+// Bulk version of adjust_video_reps for every video in a plan, including
+// already-'watched' ones — otherwise a completed video's required_reps could
+// never be raised again, and a fully-completed plan's status would never be
+// re-derived when reps change (see recompute_plan_status below).
+#[tauri::command]
+pub async fn batch_adjust_plan_reps(
+    state: State<'_, AppState>,
+    plan_id: i64,
+    delta: i64,
+) -> Result<(), String> {
+    let now = now_str();
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+
+    let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "SELECT id, required_reps, completed_reps, status FROM videos WHERE plan_id = ?",
+    )
+    .bind(plan_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    for (id, required_reps, completed_reps, status) in rows {
+        let new_required = (required_reps + delta).max(0);
+        let new_status = derive_reps_status(new_required, completed_reps, &status);
+        sqlx::query("UPDATE videos SET required_reps = ?, status = ?, updated_at = ? WHERE id = ?")
+            .bind(new_required)
+            .bind(&new_status)
+            .bind(&now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    recompute_plan_status(&mut tx, plan_id, &now).await?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Credit one playback rep for a video. At most one rep is credited per
+// calendar day, so replaying the same video repeatedly in one sitting can't
+// satisfy a multi-rep requirement in a single day. Once completed_reps
+// reaches required_reps the video is marked 'watched'; otherwise it stays
+// 'watching' so it keeps showing up in today's pending list until the
+// requirement is met (potentially across several days).
+#[tauri::command]
+pub async fn complete_video_rep(state: State<'_, AppState>, video_id: i64) -> Result<Video, String> {
+    let now = now_str();
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+
+    let (required_reps, completed_reps, last_rep_date): (i64, i64, Option<String>) = sqlx::query_as(
+        "SELECT required_reps, completed_reps, last_rep_date FROM videos WHERE id = ?",
+    )
+    .bind(video_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let already_credited_today = last_rep_date.as_deref() == Some(today.as_str());
+    let new_completed = if already_credited_today {
+        completed_reps
+    } else {
+        (completed_reps + 1).min(required_reps)
+    };
+    let new_status = if new_completed >= required_reps { "watched" } else { "watching" };
+
+    sqlx::query(
+        "UPDATE videos SET completed_reps = ?, last_rep_date = ?, status = ?,
+                progress_seconds = 0, updated_at = ? WHERE id = ?",
+    )
+    .bind(new_completed)
+    .bind(&today)
+    .bind(new_status)
+    .bind(&now)
+    .bind(video_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
 
     let (plan_id,): (i64,) = sqlx::query_as("SELECT plan_id FROM videos WHERE id = ?")
         .bind(video_id)

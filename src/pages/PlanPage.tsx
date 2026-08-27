@@ -3,11 +3,12 @@ import { useVideos } from "../hooks/useVideos";
 import { useAppContext } from "../context/AppContext";
 import {
   rescanPlan, deletePlan, activatePlan, deactivatePlan, listPlans, setPlanPriority,
-  setPlanBackground, setPlanProtected,
+  setPlanBackground, setPlanProtected, setPlanWeeklySchedule,
 } from "../api/plans";
+import { adjustVideoReps, batchAdjustPlanReps } from "../api/videos";
 import { useState, useEffect } from "react";
 import { canOpenPlanMedia } from "../components/PlanCard";
-import type { Plan, Video } from "../types";
+import type { Plan, Video, WeekdaySetting } from "../types";
 
 // ─── Priority ────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,117 @@ const PRIORITY_COLORS = [
   "text-yellow-400 border-yellow-700",
   "text-red-400 border-red-700",
 ];
+
+// ─── Weekly schedule ──────────────────────────────────────────────────────────
+
+const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+// JS Date.getDay() is 0=Sunday..6=Saturday; convert to 0=Monday..6=Sunday to
+// match the backend's weekly_schedule index (chrono's num_days_from_monday).
+function todayWeekdayIdx(): number {
+  return (new Date().getDay() + 6) % 7;
+}
+
+function todaySetting(plan: Plan): WeekdaySetting {
+  return plan.weekly_schedule[todayWeekdayIdx()] ?? { episodes: plan.episodes_per_day, blank_minutes: 0 };
+}
+
+function WeeklyScheduleEditor({ plan, onSave }: { plan: Plan; onSave: (schedule: WeekdaySetting[]) => Promise<void> }) {
+  const [expanded, setExpanded] = useState(false);
+  const [rows, setRows] = useState<WeekdaySetting[]>(plan.weekly_schedule);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setRows(plan.weekly_schedule); }, [plan.weekly_schedule]);
+
+  const updateRow = (i: number, patch: Partial<WeekdaySetting>) => {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(rows);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+      >
+        {expanded ? "▼" : "▶"} 高级设置（按星期设置集数与空白练习）
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-2 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+          {rows.map((row, i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-2 bg-gray-700/50 rounded-lg">
+              <span className="text-xs text-gray-300 w-10 shrink-0">{WEEKDAY_LABELS[i]}</span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  value={row.episodes}
+                  onChange={(e) => updateRow(i, { episodes: Math.max(0, Number(e.target.value) || 0) })}
+                  className="w-14 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
+                />
+                <span className="text-[10px] text-gray-500 shrink-0">集</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min={0}
+                  max={60}
+                  value={row.blank_minutes}
+                  onChange={(e) => updateRow(i, { blank_minutes: Math.min(60, Math.max(0, Number(e.target.value) || 0)) })}
+                  className="w-14 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
+                />
+                <span className="text-[10px] text-gray-500 shrink-0">分钟空白练习</span>
+              </div>
+            </div>
+          ))}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              saved ? "bg-green-700 text-green-200" : "bg-sky-600 hover:bg-sky-500 text-white"
+            }`}
+          >
+            {saved ? "已保存 ✓" : saving ? "保存中…" : "保存"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Batch rep adjustment ─────────────────────────────────────────────────────
+
+function BatchRepsControl({ onAdjust }: { onAdjust: (delta: number) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const handle = async (delta: number) => {
+    setBusy(true);
+    try { await onAdjust(delta); } finally { setBusy(false); }
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-gray-500">批量练习次数</span>
+      <button onClick={() => handle(-1)} disabled={busy}
+        className="w-6 h-6 flex items-center justify-center text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-40 rounded transition-colors text-gray-300">
+        −
+      </button>
+      <button onClick={() => handle(1)} disabled={busy}
+        className="w-6 h-6 flex items-center justify-center text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-40 rounded transition-colors text-gray-300">
+        +
+      </button>
+    </div>
+  );
+}
 
 // ─── Tree helpers ─────────────────────────────────────────────────────────────
 
@@ -74,9 +186,10 @@ const STATUS_DOT: Record<string, string> = {
 // ─── Video file node ──────────────────────────────────────────────────────────
 
 function VideoFileNode({
-  node, planId, isParentMode, episodeNum,
+  node, planId, isParentMode, episodeNum, onAdjustReps,
 }: {
   node: TreeNode; planId: number; isLocked: boolean; isParentMode: boolean; episodeNum: number;
+  onAdjustReps: (videoId: number, delta: number) => void;
 }) {
   const navigate = useNavigate();
   const { isCastActive, castSnapshot, switchCastVideo } = useAppContext();
@@ -124,8 +237,15 @@ function VideoFileNode({
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-gray-600 shrink-0">{episodeNum}</span>
           <span className={`text-sm truncate ${cleared ? "text-gray-500 line-through" : "text-gray-200"}`}>{video.title}</span>
-          {video.status === "watched" && !cleared && <span className="text-[10px] text-green-500 shrink-0">已学</span>}
+          {video.status === "watched" && !cleared && (
+            <span className="text-[10px] text-green-500 shrink-0">
+              {video.completed_reps > 0 ? "已学" : "无需学习"}
+            </span>
+          )}
           {cleared && <span className="text-[10px] text-gray-500 shrink-0 no-underline">已清理</span>}
+          {video.required_reps > 1 && (
+            <span className="text-[10px] text-sky-400 shrink-0">练习 {video.completed_reps}/{video.required_reps}</span>
+          )}
           {isCastingThis && (
             <span className="text-[10px] bg-sky-500/90 text-white font-semibold px-1.5 py-0.5 rounded shrink-0">📺 投屏中</span>
           )}
@@ -145,6 +265,15 @@ function VideoFileNode({
       {!cleared && video.duration_seconds && (
         <span className="text-[10px] text-gray-600 shrink-0">{formatTime(video.duration_seconds)}</span>
       )}
+      {isParentMode && (
+        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => onAdjustReps(video.id, -1)}
+            className="w-5 h-5 flex items-center justify-center text-[10px] bg-gray-700 hover:bg-gray-600 rounded text-gray-300 transition-colors">−</button>
+          <span className="w-4 text-center text-[10px] text-gray-400">{video.required_reps}</span>
+          <button onClick={() => onAdjustReps(video.id, 1)}
+            className="w-5 h-5 flex items-center justify-center text-[10px] bg-gray-700 hover:bg-gray-600 rounded text-gray-300 transition-colors">+</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -160,9 +289,10 @@ function countTypeInTree(node: TreeNode): { video: number; audio: number } {
 }
 
 function VideoFolderNode({
-  node, planId, isLocked, isParentMode, episodeCounter,
+  node, planId, isLocked, isParentMode, episodeCounter, onAdjustReps,
 }: {
   node: TreeNode; planId: number; isLocked: boolean; isParentMode: boolean; episodeCounter: { n: number };
+  onAdjustReps: (videoId: number, delta: number) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const counts = countTypeInTree(node);
@@ -178,7 +308,7 @@ function VideoFolderNode({
       </button>
       {expanded && (
         <div className="ml-4 mt-1 flex flex-col gap-1">
-          <VideoTreeLevel nodes={node.children} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} />
+          <VideoTreeLevel nodes={node.children} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} onAdjustReps={onAdjustReps} />
         </div>
       )}
     </div>
@@ -186,17 +316,18 @@ function VideoFolderNode({
 }
 
 function VideoTreeLevel({
-  nodes, planId, isLocked, isParentMode, episodeCounter,
+  nodes, planId, isLocked, isParentMode, episodeCounter, onAdjustReps,
 }: {
   nodes: TreeNode[]; planId: number; isLocked: boolean; isParentMode: boolean; episodeCounter: { n: number };
+  onAdjustReps: (videoId: number, delta: number) => void;
 }) {
   return (
     <>
       {nodes.map((node, i) =>
         node.type === "folder" ? (
-          <VideoFolderNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} />
+          <VideoFolderNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} onAdjustReps={onAdjustReps} />
         ) : node.video?.media_type === "video" ? (
-          <VideoFileNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeNum={++episodeCounter.n} />
+          <VideoFileNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeNum={++episodeCounter.n} onAdjustReps={onAdjustReps} />
         ) : null
       )}
     </>
@@ -207,7 +338,8 @@ function VideoTreeLevel({
 
 function AudioTab({
   videos, planId, plan, epPerDay, setEpPerDay, activating, isParentMode,
-  onActivate, onDeactivate, onPriorityChange, onBackgroundToggle,
+  onActivate, onDeactivate, onPriorityChange, onBackgroundToggle, onSaveWeeklySchedule,
+  onAdjustReps, onBatchAdjustReps,
 }: {
   videos: Video[];
   planId: number;
@@ -220,6 +352,9 @@ function AudioTab({
   onDeactivate: () => void;
   onPriorityChange: (p: number) => void;
   onBackgroundToggle: (v: boolean) => Promise<void>;
+  onSaveWeeklySchedule: (schedule: WeekdaySetting[]) => Promise<void>;
+  onAdjustReps: (videoId: number, delta: number) => void;
+  onBatchAdjustReps: (delta: number) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const { bgAudioPlans, bgSetTrack, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying } = useAppContext();
@@ -233,6 +368,8 @@ function AudioTab({
     setTogglingBg(true);
     try { await onBackgroundToggle(checked); } finally { setTogglingBg(false); }
   };
+
+  const today = todaySetting(plan);
 
   return (
     <div className="space-y-4">
@@ -255,7 +392,7 @@ function AudioTab({
         </label>
       </div>}
 
-      {/* Priority */}
+      {/* Priority + batch reps */}
       {isParentMode && <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-500">优先级</span>
         <div className="flex gap-1">
@@ -276,12 +413,18 @@ function AudioTab({
         {plan.is_locked_by_priority && (
           <span className="text-xs text-orange-400">🔒 存在更高优先级计划未完成</span>
         )}
+        <div className="ml-auto">
+          <BatchRepsControl onAdjust={onBatchAdjustReps} />
+        </div>
       </div>}
 
       {/* Daily schedule */}
       {isParentMode && (plan.daily_schedule_active ? (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-sky-900/20 border border-sky-800/40 rounded-lg">
-          <span className="text-sky-400 text-sm">📋 每日推荐 {plan.episodes_per_day} 集</span>
+          <span className="text-sky-400 text-sm">
+            📋 今日推荐 {today.episodes} 集
+            {today.blank_minutes > 0 && ` · 📝 空白练习 ${today.blank_minutes} 分钟`}
+          </span>
           <div className="ml-auto flex items-center gap-2">
             <select value={epPerDay} onChange={(e) => setEpPerDay(Number(e.target.value))}
               className="bg-gray-800 border border-gray-600 rounded text-xs text-gray-300 px-2 py-1 outline-none">
@@ -308,6 +451,10 @@ function AudioTab({
           </div>
         </div>
       ))}
+
+      {isParentMode && (
+        <WeeklyScheduleEditor plan={plan} onSave={onSaveWeeklySchedule} />
+      )}
 
       {/* Audio file list */}
       <div className="flex flex-col gap-1">
@@ -343,7 +490,12 @@ function AudioTab({
                     {v.title}
                   </span>
                   {v.status === "watched" && (
-                    <span className="text-[10px] text-green-500 shrink-0">已学</span>
+                    <span className="text-[10px] text-green-500 shrink-0">
+                      {v.completed_reps > 0 ? "已学" : "无需学习"}
+                    </span>
+                  )}
+                  {v.required_reps > 1 && (
+                    <span className="text-[10px] text-sky-400 shrink-0">练习 {v.completed_reps}/{v.required_reps}</span>
                   )}
                   {!canOpen && <span className="text-xs shrink-0">🔒</span>}
                 </div>
@@ -358,6 +510,15 @@ function AudioTab({
                 <span className="text-[10px] text-gray-600 shrink-0">{formatTime(v.duration_seconds)}</span>
               )}
               <div className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[v.status] ?? "bg-gray-600"}`} />
+              {isParentMode && (
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <button onClick={() => onAdjustReps(v.id, -1)}
+                    className="w-5 h-5 flex items-center justify-center text-[10px] bg-gray-700 hover:bg-gray-600 rounded text-gray-300 transition-colors">−</button>
+                  <span className="w-4 text-center text-[10px] text-gray-400">{v.required_reps}</span>
+                  <button onClick={() => onAdjustReps(v.id, 1)}
+                    className="w-5 h-5 flex items-center justify-center text-[10px] bg-gray-700 hover:bg-gray-600 rounded text-gray-300 transition-colors">+</button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -474,6 +635,22 @@ export default function PlanPage() {
     await bgRefreshPlans();
   };
 
+  const handleSaveWeeklySchedule = async (schedule: WeekdaySetting[]) => {
+    await setPlanWeeklySchedule(id, schedule);
+    await loadPlan();
+  };
+
+  const handleAdjustReps = async (videoId: number, delta: number) => {
+    await adjustVideoReps(videoId, delta);
+    await refresh();
+  };
+
+  const handleBatchAdjustReps = async (delta: number) => {
+    await batchAdjustPlanReps(id, delta);
+    await refresh();
+    await loadPlan();
+  };
+
   const videoTree = plan ? buildTree(videos.filter((v) => v.media_type === "video"), plan.folder_path) : [];
   const isLockedOverall = (plan?.is_locked_by_priority ?? false) || isLimitExceeded;
   const showTabs = hasVideo && hasAudio;
@@ -564,7 +741,7 @@ export default function PlanPage() {
       {/* ── Video Tab ── */}
       {(activeTab === "video" || !showTabs) && hasVideo && plan && (
         <div>
-          {/* Priority */}
+          {/* Priority + batch reps */}
           {isParentMode && <div className="flex items-center gap-3 flex-wrap mb-3">
             <span className="text-xs text-gray-500">优先级</span>
             <div className="flex gap-1">
@@ -585,12 +762,18 @@ export default function PlanPage() {
             {plan.is_locked_by_priority && (
               <span className="text-xs text-orange-400">🔒 存在更高优先级计划未完成</span>
             )}
+            <div className="ml-auto">
+              <BatchRepsControl onAdjust={handleBatchAdjustReps} />
+            </div>
           </div>}
 
           {/* Daily schedule */}
           {isParentMode && (plan.daily_schedule_active ? (
             <div className="flex items-center gap-3 px-4 py-2.5 bg-sky-900/20 border border-sky-800/40 rounded-lg mb-4">
-              <span className="text-sky-400 text-sm">📋 每日推荐 {plan.episodes_per_day} 集</span>
+              <span className="text-sky-400 text-sm">
+                📋 今日推荐 {todaySetting(plan).episodes} 集
+                {todaySetting(plan).blank_minutes > 0 && ` · 📝 空白练习 ${todaySetting(plan).blank_minutes} 分钟`}
+              </span>
               <div className="ml-auto flex items-center gap-2">
                 <select value={epPerDay} onChange={(e) => setEpPerDay(Number(e.target.value))} className="bg-gray-800 border border-gray-600 rounded text-xs text-gray-300 px-2 py-1 outline-none">
                   {[1, 2, 3, 5].map((n) => <option key={n} value={n}>{n} 集/天</option>)}
@@ -613,6 +796,10 @@ export default function PlanPage() {
             </div>
           ))}
 
+          {isParentMode && (
+            <WeeklyScheduleEditor plan={plan} onSave={handleSaveWeeklySchedule} />
+          )}
+
           {loading && <div className="text-center text-gray-500 py-8">加载中…</div>}
           {error && <div className="text-center text-red-400 py-4">{error}</div>}
           {!loading && videoTree.length === 0 && (
@@ -623,7 +810,7 @@ export default function PlanPage() {
           )}
           {videoTree.length > 0 && (
             <div className="flex flex-col gap-1">
-              <VideoTreeLevel nodes={videoTree} planId={id} isLocked={isLockedOverall} isParentMode={isParentMode} episodeCounter={{ n: 0 }} />
+              <VideoTreeLevel nodes={videoTree} planId={id} isLocked={isLockedOverall} isParentMode={isParentMode} episodeCounter={{ n: 0 }} onAdjustReps={handleAdjustReps} />
             </div>
           )}
         </div>
@@ -643,6 +830,9 @@ export default function PlanPage() {
           onDeactivate={async () => { await deactivatePlan(id); await loadPlan(); }}
           onPriorityChange={handleSavePriority}
           onBackgroundToggle={handleBackgroundToggle}
+          onSaveWeeklySchedule={handleSaveWeeklySchedule}
+          onAdjustReps={handleAdjustReps}
+          onBatchAdjustReps={handleBatchAdjustReps}
         />
       )}
 

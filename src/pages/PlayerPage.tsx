@@ -2,7 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getVideoUrl } from "../api/videoSrc";
 import { listVideosForPlan } from "../api/videos";
-import { updateVideoStatus, updateVideoProgress, setVideoDuration } from "../api/videos";
+import { updateVideoStatus, updateVideoProgress, setVideoDuration, completeVideoRep } from "../api/videos";
 import { useWatchSession } from "../hooks/useWatchSession";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
@@ -263,15 +263,23 @@ export default function PlayerPage() {
 
   // Mark the current item complete, record the session, and head home.
   // Shared by natural end-of-playback and the manual "finish early" button.
+  // Any failure here (e.g. a backend error) must not be swallowed silently —
+  // without the try/catch, a thrown/rejected completeVideoRep left the player
+  // stuck forever with no visible feedback: the "已完成" overlay never showed
+  // and the home task never disappeared, with no clue as to why.
   const finishVideo = useCallback(async () => {
     if (!isAudio) notifyVideoPause();
     if (!isParentMode) {
-      await endSession();
-      await updateVideoStatus(vId, "watched");
-      setVideo((v) => (v ? { ...v, status: "watched" } : v));
-      await refreshTodayTotal();
-      setEnded(true);
-      setTimeout(() => navigate("/"), 2000);
+      try {
+        await endSession();
+        const updated = await completeVideoRep(vId);
+        setVideo(updated);
+        await refreshTodayTotal();
+        setEnded(true);
+        setTimeout(() => navigate("/"), 2000);
+      } catch (e) {
+        alert(`标记完成失败：${e}`);
+      }
     } else {
       navigate("/");
     }

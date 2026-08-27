@@ -1,8 +1,52 @@
 use crate::db::AppState;
-use chrono::Local;
+use chrono::{Datelike, Local};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use walkdir::WalkDir;
+
+// ─── Weekly schedule ──────────────────────────────────────────────────────────
+// Per-weekday episode quota + blank-practice minutes, index 0=Monday..6=Sunday.
+// Stored on `plans.weekly_schedule` as a JSON array; the plain "N episodes/day"
+// selector is just a shortcut that overwrites all 7 `episodes` values at once
+// (see activate_plan), so both settings always read/write the same column.
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct WeekdaySetting {
+    pub episodes: i64,
+    pub blank_minutes: i64,
+}
+
+fn default_week() -> Vec<WeekdaySetting> {
+    vec![WeekdaySetting { episodes: 1, blank_minutes: 0 }; 7]
+}
+
+fn parse_weekly_schedule(json: &str) -> Vec<WeekdaySetting> {
+    serde_json::from_str::<Vec<WeekdaySetting>>(json)
+        .ok()
+        .filter(|v| v.len() == 7)
+        .unwrap_or_else(default_week)
+}
+
+// Monday=0 .. Sunday=6, aligned with chrono's num_days_from_monday().
+pub(crate) fn effective_day_setting(weekly_schedule_json: &str, weekday_idx: usize) -> (i64, i64) {
+    let days = parse_weekly_schedule(weekly_schedule_json);
+    let d = days[weekday_idx];
+    (d.episodes, d.blank_minutes)
+}
+
+// True when every weekday's blank-practice minutes is 0, i.e. the plan never
+// asks for recurring offline practice. Used to decide overall plan completion:
+// a plan with ongoing blank practice can never be "completed" since that task
+// recurs every day indefinitely.
+pub(crate) fn weekly_blank_all_zero(weekly_schedule_json: &str) -> bool {
+    parse_weekly_schedule(weekly_schedule_json)
+        .iter()
+        .all(|d| d.blank_minutes == 0)
+}
+
+pub(crate) fn today_weekday_idx() -> usize {
+    Local::now().weekday().num_days_from_monday() as usize
+}
 
 const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts", "m2ts", "mts", "mpg",
@@ -60,6 +104,7 @@ pub struct Plan {
     pub audio_role: String,
     pub is_background: i64, // 1 = audio files also appear in background player
     pub is_protected: i64,  // 1 = plan and its files cannot be deleted/cleaned up
+    pub weekly_schedule: String, // JSON array of 7 WeekdaySetting, Mon..Sun
     pub created_at: String,
     pub updated_at: String,
 }
@@ -78,6 +123,7 @@ pub struct PlanWithCounts {
     pub audio_role: String,
     pub is_background: i64,
     pub is_protected: i64,
+    pub weekly_schedule: Vec<WeekdaySetting>,
     pub is_locked_by_priority: bool,
     pub video_count: i64,
     pub audio_count: i64,
@@ -120,6 +166,7 @@ struct PlanRow {
     audio_role: String,
     is_background: i64,
     is_protected: i64,
+    weekly_schedule: String,
     video_count: i64,
     audio_count: i64,
     watched_count: i64,
@@ -277,6 +324,7 @@ fn build_plan_with_counts(
         audio_role: r.audio_role,
         is_background: r.is_background,
         is_protected: r.is_protected,
+        weekly_schedule: parse_weekly_schedule(&r.weekly_schedule),
         is_locked_by_priority,
         video_count: r.video_count,
         audio_count: r.audio_count,
@@ -397,7 +445,8 @@ fn scan_media_files(
 
 const PLAN_SELECT: &str =
     "SELECT p.id, p.name, p.folder_path, p.status, p.episodes_per_day, p.daily_schedule_active,
-            p.priority, p.scan_video, p.scan_audio, p.audio_role, p.is_background, p.is_protected, p.created_at, p.updated_at,
+            p.priority, p.scan_video, p.scan_audio, p.audio_role, p.is_background, p.is_protected,
+            p.weekly_schedule, p.created_at, p.updated_at,
             COUNT(CASE WHEN v.media_type = 'video' THEN 1 END) as video_count,
             COUNT(CASE WHEN v.media_type = 'audio' THEN 1 END) as audio_count,
             COALESCE(SUM(CASE WHEN v.status = 'watched' THEN 1 ELSE 0 END), 0) as watched_count
@@ -430,17 +479,19 @@ pub async fn add_plan(
 
     let media_files = scan_media_files(folder, sv != 0, sa != 0)?;
     let now = now_str();
+    let default_schedule = serde_json::to_string(&default_week()).unwrap();
     let mut tx_db = state.db.begin().await.map_err(|e| e.to_string())?;
 
     let plan_id: i64 = sqlx::query_scalar(
-        "INSERT INTO plans (name, folder_path, status, scan_video, scan_audio, audio_role, is_background, created_at, updated_at)
-         VALUES (?, ?, 'not_started', ?, ?, ?, 0, ?, ?) RETURNING id",
+        "INSERT INTO plans (name, folder_path, status, scan_video, scan_audio, audio_role, is_background, weekly_schedule, created_at, updated_at)
+         VALUES (?, ?, 'not_started', ?, ?, ?, 0, ?, ?, ?) RETURNING id",
     )
     .bind(&plan_name)
     .bind(&folder_path_str)
     .bind(sv)
     .bind(sa)
     .bind(&ar)
+    .bind(&default_schedule)
     .bind(&now)
     .bind(&now)
     .fetch_one(&mut *tx_db)
@@ -510,6 +561,7 @@ pub async fn add_plan(
         audio_role: ar,
         is_background: 0,
         is_protected: 0,
+        weekly_schedule: default_week(),
         is_locked_by_priority: false,
         video_count,
         audio_count,
@@ -572,7 +624,8 @@ async fn plan_blocks_today(db: &sqlx::SqlitePool, plan: &PlanRow) -> Result<bool
     .fetch_one(db)
     .await
     .map_err(|e| e.to_string())?;
-    Ok(today_done < plan.episodes_per_day)
+    let (today_quota, _) = effective_day_setting(&plan.weekly_schedule, today_weekday_idx());
+    Ok(today_done < today_quota)
 }
 
 #[tauri::command]
@@ -756,10 +809,27 @@ pub async fn activate_plan(
     episodes_per_day: i64,
 ) -> Result<(), String> {
     let now = now_str();
+    let (current_schedule,): (String,) =
+        sqlx::query_as("SELECT weekly_schedule FROM plans WHERE id = ?")
+            .bind(plan_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| e.to_string())?;
+    // The plain "N episodes/day" selector is a shortcut: it overwrites every
+    // day's episode count but leaves each day's blank-practice minutes intact,
+    // so both settings always read/write the same weekly_schedule column.
+    let days = parse_weekly_schedule(&current_schedule);
+    let updated: Vec<WeekdaySetting> = days
+        .into_iter()
+        .map(|d| WeekdaySetting { episodes: episodes_per_day, blank_minutes: d.blank_minutes })
+        .collect();
+    let new_schedule = serde_json::to_string(&updated).unwrap();
+
     sqlx::query(
-        "UPDATE plans SET daily_schedule_active = 1, episodes_per_day = ?, updated_at = ? WHERE id = ?",
+        "UPDATE plans SET daily_schedule_active = 1, episodes_per_day = ?, weekly_schedule = ?, updated_at = ? WHERE id = ?",
     )
     .bind(episodes_per_day)
+    .bind(&new_schedule)
     .bind(&now)
     .bind(plan_id)
     .execute(&state.db)
@@ -793,6 +863,46 @@ pub async fn set_plan_priority(
         .execute(&state.db)
         .await
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_plan_weekly_schedule(
+    state: State<'_, AppState>,
+    plan_id: i64,
+    schedule: String,
+) -> Result<(), String> {
+    let days: Vec<WeekdaySetting> = serde_json::from_str(&schedule)
+        .map_err(|_| "格式错误：应为 7 天的数组".to_string())?;
+    if days.len() != 7 {
+        return Err("必须设置周一到周日共 7 天".to_string());
+    }
+    for d in &days {
+        if d.episodes < 0 {
+            return Err("每日集数不能为负数".to_string());
+        }
+        if d.blank_minutes < 0 || d.blank_minutes > 60 {
+            return Err("空白练习时长必须在 0-60 分钟之间".to_string());
+        }
+    }
+
+    let now = now_str();
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+
+    sqlx::query("UPDATE plans SET weekly_schedule = ?, updated_at = ? WHERE id = ?")
+        .bind(&schedule)
+        .bind(&now)
+        .bind(plan_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Blank-practice minutes affect whether the plan can be "completed" (see
+    // recompute_plan_status), so a schedule edit alone can flip plan status
+    // even with no video change.
+    crate::commands::videos::recompute_plan_status(&mut tx, plan_id, &now).await?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
