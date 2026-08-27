@@ -37,7 +37,7 @@ function SaveBtn({ saved, onClick, label = "保存" }: { saved: boolean; onClick
 export default function SettingsPage() {
   const { isParentMode, dailyLimitSeconds, setDailyLimit, maxContinuousSeconds,
     breakDurationSeconds, restGapSeconds, blockedRanges, saveBreakSettings,
-    isDailyLimitSkippedToday, setSkipDailyLimitToday } = useAppContext();
+    isDailyLimitSkippedToday, setSkipDailyLimitToday, allowSkipPlayback, setAllowSkipPlayback } = useAppContext();
 
   const [dHours, setDHours] = useState(String(Math.floor(dailyLimitSeconds / 3600)));
   const [dMins, setDMins] = useState(String(Math.floor((dailyLimitSeconds % 3600) / 60)));
@@ -210,6 +210,31 @@ export default function SettingsPage() {
           </div>
         </div>
         <SaveBtn saved={savedBreak} onClick={handleSaveBreak} />
+      </section>
+
+      {/* Skip playback */}
+      <section className="bg-gray-800 border border-gray-700 rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-1">跳过播放</h2>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-gray-300">允许跳过播放</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {allowSkipPlayback
+                ? "关闭后：播放页不能拖动进度条快进，「完成本集」按钮隐藏，首页不显示「之前已看过」"
+                : "已关闭，孩子必须完整看完才能标记完成"}
+            </p>
+          </div>
+          <button
+            onClick={() => setAllowSkipPlayback(!allowSkipPlayback)}
+            className={`shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              allowSkipPlayback
+                ? "bg-green-700 text-green-200"
+                : "bg-gray-700 hover:bg-gray-600 text-gray-300"
+            }`}
+          >
+            {allowSkipPlayback ? "已开启 ✓" : "已关闭"}
+          </button>
+        </div>
       </section>
 
       {/* Blocked times */}

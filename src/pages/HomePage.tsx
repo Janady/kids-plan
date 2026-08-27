@@ -201,7 +201,7 @@ interface TaskCardProps {
 
 function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardProps) {
   const navigate = useNavigate();
-  const { isCastActive, castSnapshot, switchCastVideo } = useAppContext();
+  const { isCastActive, castSnapshot, switchCastVideo, allowSkipPlayback } = useAppContext();
   const isWatching = task.video_status === "watching";
   const isAudio = task.media_type === "audio";
   const isCastingThis = castSnapshot?.current?.video_id === task.video_id;
@@ -350,7 +350,7 @@ function TaskCard({ task, planId, planName, isLocked, onMarkWatched }: TaskCardP
         ) : null}
 
         {/* Mark as already-watched (skip without using today's quota) */}
-        {!isLocked && (
+        {!isLocked && allowSkipPlayback && (
           <button
             onClick={(e) => {
               e.stopPropagation();

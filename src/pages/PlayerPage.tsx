@@ -55,7 +55,7 @@ export default function PlayerPage() {
   const [canFinishEarly, setCanFinishEarly] = useState(false);
 
   const { isLimitExceeded, refreshTodayTotal, notifyVideoPlay, notifyVideoPause, isParentMode,
-    isBreakRequired, isBedtime, bgStop } = useAppContext();
+    isBreakRequired, isBedtime, bgStop, allowSkipPlayback } = useAppContext();
   const { isAndroid } = usePlatform();
 
   // Stop any background music when opening the video player (the video has its
@@ -69,6 +69,9 @@ export default function PlayerPage() {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Furthest position naturally reached via normal playback — when skipping is
+  // disabled, forward seeks past this point are snapped back (rewinding is fine).
+  const furthestReachedRef = useRef(0);
   // Mirrors `video?.status` for callbacks (interval/unmount cleanup) whose
   // dependency arrays are intentionally empty — a completed video is replayed
   // from 0 and its progress is never persisted, so this must never fall back
@@ -158,6 +161,7 @@ export default function PlayerPage() {
     setResumedFrom(null);
     setDuration(0);
     retryCountRef.current = 0;
+    furthestReachedRef.current = 0;
     if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
     if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null; }
 
@@ -220,6 +224,7 @@ export default function PlayerPage() {
       setResumedFrom(video.progress_seconds);
       setTimeout(() => setResumedFrom(null), 3000);
     }
+    furthestReachedRef.current = Math.max(furthestReachedRef.current, el.currentTime);
 
     if (!durationSetRef.current && isFinite(dur)) {
       durationSetRef.current = true;
@@ -274,12 +279,27 @@ export default function PlayerPage() {
 
   const handleEnded = useCallback(() => { finishVideo(); }, [finishVideo]);
 
-  // Show a "finish early" button once playback passes 80% (skip end credits)
+  // Show a "finish early" button once playback passes 80% (skip end credits).
+  // Also tracks the furthest position reached, used by handleSeeking below to
+  // block forward-skipping when allowSkipPlayback is off.
   const handleTimeUpdate = useCallback(() => {
     const el = mediaRef.current;
     if (!el || !el.duration || !isFinite(el.duration)) return;
-    if (el.currentTime / el.duration >= 0.8) setCanFinishEarly(true);
-  }, []);
+    furthestReachedRef.current = Math.max(furthestReachedRef.current, el.currentTime);
+    if (allowSkipPlayback && el.currentTime / el.duration >= 0.8) setCanFinishEarly(true);
+  }, [allowSkipPlayback]);
+
+  // When skipping is disabled, snap any forward seek back to the furthest
+  // position actually reached via normal playback — rewinding to re-watch is
+  // still allowed, only jumping ahead (drag the seek bar, or double-tap seek
+  // controls) is blocked.
+  const handleSeeking = useCallback(() => {
+    if (allowSkipPlayback) return;
+    const el = mediaRef.current;
+    if (el && el.currentTime > furthestReachedRef.current + 0.5) {
+      el.currentTime = furthestReachedRef.current;
+    }
+  }, [allowSkipPlayback]);
 
   // Save progress every 5 seconds (child mode only)
   useEffect(() => {
@@ -383,11 +403,12 @@ export default function PlayerPage() {
               src={src}
               controls
               autoPlay
-              className="w-full"
+              className={`w-full ${allowSkipPlayback ? "" : "no-seek"}`}
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handlePlay}
               onPause={handlePause}
               onTimeUpdate={handleTimeUpdate}
+              onSeeking={handleSeeking}
               onEnded={handleEnded}
               onError={handleMediaError}
             />
@@ -452,11 +473,12 @@ export default function PlayerPage() {
               controls
               controlsList="nodownload"
               autoPlay
-              className="w-full h-full"
+              className={`w-full h-full ${allowSkipPlayback ? "" : "no-seek"}`}
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={handlePlay}
               onPause={handlePause}
               onTimeUpdate={handleTimeUpdate}
+              onSeeking={handleSeeking}
               onEnded={handleEnded}
               onError={handleMediaError}
             />

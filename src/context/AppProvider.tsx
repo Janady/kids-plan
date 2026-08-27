@@ -46,6 +46,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
   const [skipDailyLimitDate, setSkipDailyLimitDate] = useState<string | null>(null);
   const [skipContinuousLimitDate, setSkipContinuousLimitDate] = useState<string | null>(null);
+  const [allowSkipPlayback, setAllowSkipPlaybackState] = useState(true);
 
   // Background audio state
   const [bgAudioPlans, setBgAudioPlans] = useState<BackgroundAudioPlan[]>([]);
@@ -106,7 +107,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getSetting("blocked_time_ranges"),
       getSetting("skip_daily_limit_date"),
       getSetting("skip_continuous_limit_date"),
-    ]).then(([limit, maxCont, breakDur, restGap, blocked, skipDaily, skipCont]) => {
+      getSetting("allow_skip_playback"),
+    ]).then(([limit, maxCont, breakDur, restGap, blocked, skipDaily, skipCont, allowSkip]) => {
       if (limit) setDailyLimitSeconds(parseInt(limit, 10));
       if (maxCont) setMaxContinuousSeconds(parseInt(maxCont, 10) * 60);
       if (breakDur) setBreakDurationSeconds(parseInt(breakDur, 10) * 60);
@@ -114,6 +116,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (blocked) { try { setBlockedRanges(JSON.parse(blocked)); } catch {} }
       if (skipDaily) setSkipDailyLimitDate(skipDaily);
       if (skipCont) setSkipContinuousLimitDate(skipCont);
+      if (allowSkip !== null) setAllowSkipPlaybackState(allowSkip === "true");
     });
     refreshTodayTotal();
     bgRefreshPlans();
@@ -222,6 +225,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const value = enabled ? todayDateKey() : "";
     await setSetting("skip_daily_limit_date", value);
     setSkipDailyLimitDate(enabled ? value : null);
+  }, []);
+
+  const setAllowSkipPlayback = useCallback(async (enabled: boolean) => {
+    await setSetting("allow_skip_playback", String(enabled));
+    setAllowSkipPlaybackState(enabled);
   }, []);
 
   const skipBreakOnce = useCallback(
@@ -453,6 +461,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dismissBreak, notifyVideoPlay, notifyVideoPause, saveBreakSettings,
         isParentMode, toggleParentMode,
         isDailyLimitSkippedToday, setSkipDailyLimitToday, skipBreakOnce, skipContinuousLimitToday,
+        allowSkipPlayback, setAllowSkipPlayback,
         bgAudioPlans, bgCurrentPlanId, bgCurrentTrackIdx, bgScopePlanId, bgIsPlaying, bgLoopMode, bgFullscreen,
         bgRefreshPlans, bgSetPlan, bgSetTrack, bgSetScope, bgTogglePlay, bgStop, bgNext, bgPrev, bgSetLoop, bgOnEnded,
         bgSetFullscreen,

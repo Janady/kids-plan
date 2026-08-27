@@ -24,3 +24,14 @@
   to { transform: scaleY(1); }
 }
 
+/* Skip-playback disabled: hide the native seek bar so it can't be dragged
+   ahead. Chromium (WebView2 on Windows, WebView on Android) exposes the
+   scrubber as this pseudo-element; other controls (play/pause, volume,
+   time) are unaffected. The onSeeking JS snap-back in PlayerPage.tsx stays
+   as a backstop for input paths that don't go through this element (e.g.
+   hardware media keys), but hiding it removes the visible jump entirely. */
+video.no-seek::-webkit-media-controls-timeline,
+audio.no-seek::-webkit-media-controls-timeline {
+  display: none !important;
+}
+

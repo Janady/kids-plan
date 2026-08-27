@@ -27,6 +27,10 @@ export interface AppContextValue {
   setSkipDailyLimitToday: (enabled: boolean) => Promise<void>;
   skipBreakOnce: (password: string) => Promise<{ success: boolean; error?: string }>;
   skipContinuousLimitToday: (password: string) => Promise<{ success: boolean; error?: string }>;
+  // Whether children may skip ahead: drag the seek bar past watched position,
+  // finish an episode early, or mark one as "already watched" without playing it
+  allowSkipPlayback: boolean;
+  setAllowSkipPlayback: (enabled: boolean) => Promise<void>;
   // Background audio player
   bgAudioPlans: BackgroundAudioPlan[];
   bgCurrentPlanId: number | null;
