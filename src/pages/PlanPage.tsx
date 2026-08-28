@@ -528,6 +528,44 @@ function AudioTab({
   );
 }
 
+// ─── Document tab ─────────────────────────────────────────────────────────────
+
+const DOCUMENT_ICON: Record<string, string> = {
+  pdf: "📕",
+};
+function documentIcon(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  if (["jpg", "jpeg", "png", "gif", "webp", "bmp"].includes(ext)) return "🖼️";
+  return DOCUMENT_ICON[ext] ?? "📄";
+}
+
+function DocumentTab({ videos, planId }: { videos: Video[]; planId: number }) {
+  const navigate = useNavigate();
+  const documentFiles = [...videos]
+    .filter((v) => v.media_type === "document")
+    .sort((a, b) => a.sort_order - b.sort_order);
+
+  return (
+    <div className="flex flex-col gap-1">
+      {documentFiles.map((v, idx) => (
+        <div
+          key={v.id}
+          onClick={() => navigate(`/plan/${planId}/document/${v.id}`)}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-gray-700/50 bg-gray-800 hover:border-amber-600 cursor-pointer transition-all"
+        >
+          <span className="text-sm shrink-0 text-gray-500">{documentIcon(v.file_path)}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-600 shrink-0">{idx + 1}</span>
+              <span className="text-sm truncate text-gray-200">{v.title}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PlanPage() {
@@ -542,7 +580,7 @@ export default function PlanPage() {
   const [activating, setActivating] = useState(false);
   const [priority, setPriority] = useState(0);
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<"video" | "audio">("video");
+  const [activeTab, setActiveTab] = useState<"video" | "audio" | "document">("video");
   const [scanNotice, setScanNotice] = useState<string | null>(
     (location.state as { scanNotice?: string } | null)?.scanNotice ?? null,
   );
@@ -560,11 +598,13 @@ export default function PlanPage() {
 
   const hasVideo = videos.some((v) => v.media_type === "video");
   const hasAudio = videos.some((v) => v.media_type === "audio");
+  const hasDocument = videos.some((v) => v.media_type === "document");
 
   useEffect(() => {
-    if (!hasVideo && hasAudio) setActiveTab("audio");
+    if (!hasVideo && !hasAudio && hasDocument) setActiveTab("document");
+    else if (!hasVideo && hasAudio) setActiveTab("audio");
     else setActiveTab("video");
-  }, [hasVideo, hasAudio]);
+  }, [hasVideo, hasAudio, hasDocument]);
 
   const handleRescan = async () => {
     setRescanning(true);
@@ -638,7 +678,8 @@ export default function PlanPage() {
 
   const videoTree = plan ? buildTree(videos.filter((v) => v.media_type === "video"), plan.folder_path) : [];
   const isLockedOverall = (plan?.is_locked_by_priority ?? false) || isLimitExceeded;
-  const showTabs = hasVideo && hasAudio;
+  const typeCount = [hasVideo, hasAudio, hasDocument].filter(Boolean).length;
+  const showTabs = typeCount > 1;
 
   return (
     <div>
@@ -680,6 +721,7 @@ export default function PlanPage() {
           <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-4">
             {plan.video_count > 0 && <span>🎬 {plan.video_count} 视频</span>}
             {plan.audio_count > 0 && <span>🎵 {plan.audio_count} 音频</span>}
+            {plan.document_count > 0 && <span>📄 {plan.document_count} 文档</span>}
             {plan.is_background === 1 && <span className="text-purple-400">· 🎶 背景音乐</span>}
             {plan.is_protected === 1 && <span className="text-amber-400">· 🔒 已保护</span>}
             {plan.watched_count > 0 && <span>· {plan.watched_count} 已完成</span>}
@@ -705,21 +747,25 @@ export default function PlanPage() {
       {/* Tab bar */}
       {showTabs && (
         <div className="flex gap-1 mb-5 border-b border-gray-800">
-          {(["video", "audio"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 text-sm font-medium transition-all border-b-2 -mb-px ${
-                activeTab === tab
-                  ? tab === "video"
-                    ? "border-sky-500 text-sky-400"
-                    : "border-purple-500 text-purple-400"
-                  : "border-transparent text-gray-500 hover:text-gray-300"
-              }`}
-            >
-              {tab === "video" ? "🎬 视频" : "🎵 音频"}
-            </button>
-          ))}
+          {(
+            [
+              { key: "video" as const, has: hasVideo, label: "🎬 视频", color: "border-sky-500 text-sky-400" },
+              { key: "audio" as const, has: hasAudio, label: "🎵 音频", color: "border-purple-500 text-purple-400" },
+              { key: "document" as const, has: hasDocument, label: "📄 文档", color: "border-amber-500 text-amber-400" },
+            ]
+          )
+            .filter((tab) => tab.has)
+            .map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`px-4 py-2 text-sm font-medium transition-all border-b-2 -mb-px ${
+                  activeTab === tab.key ? tab.color : "border-transparent text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
         </div>
       )}
 
@@ -816,11 +862,16 @@ export default function PlanPage() {
         />
       )}
 
+      {/* ── Document Tab ── */}
+      {(activeTab === "document" || (!showTabs && !hasVideo && !hasAudio)) && hasDocument && plan && (
+        <DocumentTab videos={videos} planId={id} />
+      )}
+
       {loading && !videos.length && (
         <div className="text-center text-gray-500 py-16">加载中…</div>
       )}
       {error && <div className="text-center text-red-400 py-8">{error}</div>}
-      {!loading && !hasVideo && !hasAudio && (
+      {!loading && !hasVideo && !hasAudio && !hasDocument && (
         <div className="text-center text-gray-500 py-16">
           <p>此文件夹中没有找到媒体文件</p>
           <p className="text-xs text-gray-600 mt-2 max-w-md mx-auto leading-relaxed">

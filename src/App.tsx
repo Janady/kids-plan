@@ -11,6 +11,7 @@ import HomePage from "./pages/HomePage";
 import PlansPage from "./pages/PlansPage";
 import PlanPage from "./pages/PlanPage";
 import PlayerPage from "./pages/PlayerPage";
+import DocumentViewerPage from "./pages/DocumentViewerPage";
 import SettingsPage from "./pages/SettingsPage";
 import StatsPage from "./pages/StatsPage";
 import BackgroundAudioPage from "./pages/BackgroundAudioPage";
@@ -67,6 +68,7 @@ export default function App() {
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/plan/:planId" element={<PlanPage />} />
           <Route path="/plan/:planId/video/:videoId" element={<PlayerPage />} />
+          <Route path="/plan/:planId/document/:videoId" element={<DocumentViewerPage />} />
           <Route path="/plan/:planId/blank-practice" element={<BlankPracticePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/stats" element={<StatsPage />} />

@@ -89,6 +89,7 @@ export function PlanCard({ plan }: Props) {
         <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
           {plan.video_count > 0 && <span>🎬 {plan.video_count}</span>}
           {plan.audio_count > 0 && <span>🎵 {plan.audio_count}</span>}
+          {plan.document_count > 0 && <span>📄 {plan.document_count}</span>}
           {plan.is_background === 1 && <span className="text-purple-400">🎶</span>}
           {plan.is_protected === 1 && <span className="text-amber-400">🔒</span>}
           {plan.priority > 0 && (

@@ -57,6 +57,11 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "aac", "ogg", "opus", "wav", "m4a", "wma", "aiff",
 ];
 
+const DOCUMENT_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "pdf", "doc", "docx", "ppt", "pptx", "xls",
+    "xlsx", "txt", "md",
+];
+
 pub(crate) fn normalize_folder_path(raw: &str) -> String {
     const SAF_PREFIX: &str =
         "content://com.android.externalstorage.documents/tree/primary%3A";
@@ -86,6 +91,13 @@ fn is_audio_file(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+fn is_document_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| DOCUMENT_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 fn now_str() -> String {
     Local::now().to_rfc3339()
 }
@@ -101,6 +113,7 @@ pub struct Plan {
     pub priority: i64,
     pub scan_video: i64,
     pub scan_audio: i64,
+    pub scan_document: i64,
     pub audio_role: String,
     pub is_background: i64, // 1 = audio files also appear in background player
     pub is_protected: i64,  // 1 = plan and its files cannot be deleted/cleaned up
@@ -120,6 +133,7 @@ pub struct PlanWithCounts {
     pub priority: i64,
     pub scan_video: i64,
     pub scan_audio: i64,
+    pub scan_document: i64,
     pub audio_role: String,
     pub is_background: i64,
     pub is_protected: i64,
@@ -127,6 +141,7 @@ pub struct PlanWithCounts {
     pub is_locked_by_priority: bool,
     pub video_count: i64,
     pub audio_count: i64,
+    pub document_count: i64,
     pub watched_count: i64,
     pub next_video_id: Option<i64>,
     pub next_video_title: Option<String>,
@@ -163,12 +178,14 @@ struct PlanRow {
     priority: i64,
     scan_video: i64,
     scan_audio: i64,
+    scan_document: i64,
     audio_role: String,
     is_background: i64,
     is_protected: i64,
     weekly_schedule: String,
     video_count: i64,
     audio_count: i64,
+    document_count: i64,
     watched_count: i64,
     created_at: String,
     updated_at: String,
@@ -206,7 +223,7 @@ async fn fetch_next_video(
     if plan_status == "completed" {
         sqlx::query_as(
             "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type
-             FROM videos WHERE plan_id = ? ORDER BY sort_order DESC LIMIT 1",
+             FROM videos WHERE plan_id = ? AND media_type != 'document' ORDER BY sort_order DESC LIMIT 1",
         )
         .bind(plan_id)
         .fetch_optional(db)
@@ -215,7 +232,7 @@ async fn fetch_next_video(
     } else {
         sqlx::query_as(
             "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type
-             FROM videos WHERE plan_id = ? AND status IN ('watching', 'not_watched')
+             FROM videos WHERE plan_id = ? AND status IN ('watching', 'not_watched') AND media_type != 'document'
              ORDER BY CASE status WHEN 'watching' THEN 0 ELSE 1 END, sort_order ASC LIMIT 1",
         )
         .bind(plan_id)
@@ -244,7 +261,7 @@ async fn fetch_recent_videos(
         let mut videos: Vec<PlanPreviewVideo> = sqlx::query_as(
             "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
              FROM videos
-             WHERE plan_id = ?
+             WHERE plan_id = ? AND media_type != 'document'
              ORDER BY ABS(sort_order - ?), sort_order ASC
              LIMIT 3",
         )
@@ -277,7 +294,7 @@ async fn fetch_recent_videos(
         sqlx::query_as(
             "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
              FROM videos
-             WHERE plan_id = ? AND sort_order <= ?
+             WHERE plan_id = ? AND sort_order <= ? AND media_type != 'document'
              ORDER BY sort_order DESC
              LIMIT 3",
         )
@@ -291,7 +308,7 @@ async fn fetch_recent_videos(
         sqlx::query_as(
             "SELECT id, title, status, progress_seconds, duration_seconds, sort_order, media_type, file_path
              FROM videos
-             WHERE plan_id = ?
+             WHERE plan_id = ? AND media_type != 'document'
              ORDER BY sort_order ASC
              LIMIT 3",
         )
@@ -321,6 +338,7 @@ fn build_plan_with_counts(
         priority: r.priority,
         scan_video: r.scan_video,
         scan_audio: r.scan_audio,
+        scan_document: r.scan_document,
         audio_role: r.audio_role,
         is_background: r.is_background,
         is_protected: r.is_protected,
@@ -328,6 +346,7 @@ fn build_plan_with_counts(
         is_locked_by_priority,
         video_count: r.video_count,
         audio_count: r.audio_count,
+        document_count: r.document_count,
         watched_count: r.watched_count,
         next_video_id: next.as_ref().map(|n| n.id),
         next_video_title: next.as_ref().map(|n| n.title.clone()),
@@ -403,6 +422,7 @@ fn scan_media_files(
     folder: &std::path::Path,
     scan_video: bool,
     scan_audio: bool,
+    scan_document: bool,
 ) -> Result<Vec<(String, String, i64, String)>, String> {
     std::fs::read_dir(folder).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
@@ -422,6 +442,8 @@ fn scan_media_files(
                 Some((path, "video".to_string()))
             } else if scan_audio && is_audio_file(&path) {
                 Some((path, "audio".to_string()))
+            } else if scan_document && is_document_file(&path) {
+                Some((path, "document".to_string()))
             } else {
                 None
             }
@@ -445,10 +467,11 @@ fn scan_media_files(
 
 const PLAN_SELECT: &str =
     "SELECT p.id, p.name, p.folder_path, p.status, p.episodes_per_day, p.daily_schedule_active,
-            p.priority, p.scan_video, p.scan_audio, p.audio_role, p.is_background, p.is_protected,
+            p.priority, p.scan_video, p.scan_audio, p.scan_document, p.audio_role, p.is_background, p.is_protected,
             p.weekly_schedule, p.created_at, p.updated_at,
             COUNT(CASE WHEN v.media_type = 'video' THEN 1 END) as video_count,
             COUNT(CASE WHEN v.media_type = 'audio' THEN 1 END) as audio_count,
+            COUNT(CASE WHEN v.media_type = 'document' THEN 1 END) as document_count,
             COALESCE(SUM(CASE WHEN v.status = 'watched' THEN 1 ELSE 0 END), 0) as watched_count
      FROM plans p LEFT JOIN videos v ON v.plan_id = p.id";
 
@@ -459,6 +482,7 @@ pub async fn add_plan(
     folder_path: String,
     scan_video: Option<i64>,
     scan_audio: Option<i64>,
+    scan_document: Option<i64>,
     audio_role: Option<String>,
 ) -> Result<ScanReport, String> {
     let folder_path_str = normalize_folder_path(&folder_path);
@@ -472,24 +496,26 @@ pub async fn add_plan(
             .to_string()
     });
 
-    // Default: scan both audio and video
+    // Default: scan video, audio, and documents
     let sv = scan_video.unwrap_or(1);
     let sa = scan_audio.unwrap_or(1);
+    let sd = scan_document.unwrap_or(1);
     let ar = audio_role.unwrap_or_else(|| "plan".to_string());
 
-    let media_files = scan_media_files(folder, sv != 0, sa != 0)?;
+    let media_files = scan_media_files(folder, sv != 0, sa != 0, sd != 0)?;
     let now = now_str();
     let default_schedule = serde_json::to_string(&default_week()).unwrap();
     let mut tx_db = state.db.begin().await.map_err(|e| e.to_string())?;
 
     let plan_id: i64 = sqlx::query_scalar(
-        "INSERT INTO plans (name, folder_path, status, scan_video, scan_audio, audio_role, is_background, weekly_schedule, created_at, updated_at)
-         VALUES (?, ?, 'not_started', ?, ?, ?, 0, ?, ?, ?) RETURNING id",
+        "INSERT INTO plans (name, folder_path, status, scan_video, scan_audio, scan_document, audio_role, is_background, weekly_schedule, created_at, updated_at)
+         VALUES (?, ?, 'not_started', ?, ?, ?, ?, 0, ?, ?, ?) RETURNING id",
     )
     .bind(&plan_name)
     .bind(&folder_path_str)
     .bind(sv)
     .bind(sa)
+    .bind(sd)
     .bind(&ar)
     .bind(&default_schedule)
     .bind(&now)
@@ -537,10 +563,11 @@ pub async fn add_plan(
     };
 
     // Counts reflect what actually landed in this plan (excludes skipped duplicates)
-    let (video_count, audio_count): (i64, i64) = sqlx::query_as(
+    let (video_count, audio_count, document_count): (i64, i64, i64) = sqlx::query_as(
         "SELECT
             COUNT(CASE WHEN media_type = 'video' THEN 1 END),
-            COUNT(CASE WHEN media_type = 'audio' THEN 1 END)
+            COUNT(CASE WHEN media_type = 'audio' THEN 1 END),
+            COUNT(CASE WHEN media_type = 'document' THEN 1 END)
          FROM videos WHERE plan_id = ?",
     )
     .bind(plan_id)
@@ -558,6 +585,7 @@ pub async fn add_plan(
         priority: 0,
         scan_video: sv,
         scan_audio: sa,
+        scan_document: sd,
         audio_role: ar,
         is_background: 0,
         is_protected: 0,
@@ -565,6 +593,7 @@ pub async fn add_plan(
         is_locked_by_priority: false,
         video_count,
         audio_count,
+        document_count,
         watched_count: 0,
         next_video_id: next.as_ref().map(|n| n.id),
         next_video_title: next.as_ref().map(|n| n.title.clone()),
@@ -602,7 +631,8 @@ async fn plan_blocks_today(db: &sqlx::SqlitePool, plan: &PlanRow) -> Result<bool
     let (pending,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM videos
          WHERE plan_id = ? AND status IN ('watching', 'not_watched')
-           AND NOT (? = 1 AND media_type = 'audio')",
+           AND NOT (? = 1 AND media_type = 'audio')
+           AND media_type != 'document'",
     )
     .bind(plan.id)
     .bind(plan.is_background)
@@ -689,7 +719,12 @@ pub async fn rescan_plan(
 
     let real_path = normalize_folder_path(&plan.folder_path);
     let folder = std::path::Path::new(&real_path);
-    let disk_files = scan_media_files(folder, plan.scan_video != 0, plan.scan_audio != 0)?;
+    let disk_files = scan_media_files(
+        folder,
+        plan.scan_video != 0,
+        plan.scan_audio != 0,
+        plan.scan_document != 0,
+    )?;
     let disk_paths: std::collections::HashSet<String> =
         disk_files.iter().map(|(p, _, _, _)| p.clone()).collect();
 
@@ -912,14 +947,16 @@ pub async fn update_plan_media_settings(
     plan_id: i64,
     scan_video: i64,
     scan_audio: i64,
+    scan_document: i64,
     audio_role: String,
 ) -> Result<PlanWithCounts, String> {
     let now = now_str();
     sqlx::query(
-        "UPDATE plans SET scan_video = ?, scan_audio = ?, audio_role = ?, updated_at = ? WHERE id = ?",
+        "UPDATE plans SET scan_video = ?, scan_audio = ?, scan_document = ?, audio_role = ?, updated_at = ? WHERE id = ?",
     )
     .bind(scan_video)
     .bind(scan_audio)
+    .bind(scan_document)
     .bind(&audio_role)
     .bind(&now)
     .bind(plan_id)

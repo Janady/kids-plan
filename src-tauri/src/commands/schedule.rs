@@ -122,7 +122,7 @@ pub async fn get_today_schedule(
             let pending_videos: Vec<PendingVideo> = sqlx::query_as(
                 "SELECT id, title, file_path, status, progress_seconds, duration_seconds, sort_order, media_type,
                         required_reps, completed_reps
-                 FROM videos WHERE plan_id = ? AND status IN ('watching', 'not_watched')
+                 FROM videos WHERE plan_id = ? AND status IN ('watching', 'not_watched') AND media_type != 'document'
                  ORDER BY CASE status WHEN 'watching' THEN 0 ELSE 1 END, sort_order ASC
                  LIMIT ?",
             )

@@ -1,6 +1,6 @@
 export type PlanStatus = "not_started" | "in_progress" | "completed";
 export type VideoStatus = "not_watched" | "watching" | "watched";
-export type MediaType = "video" | "audio";
+export type MediaType = "video" | "audio" | "document";
 export type AudioRole = "plan" | "background";
 export type LoopMode = "shuffle" | "track" | "all";
 
@@ -30,6 +30,7 @@ export interface Plan {
   priority: number; // 0=None, 1=Low, 2=Medium, 3=High
   scan_video: number; // 0|1
   scan_audio: number; // 0|1
+  scan_document: number; // 0|1
   audio_role: AudioRole;
   is_background: number; // 0|1 — audio files also appear in background player
   is_protected: number; // 0|1 — plan and its files cannot be deleted/cleaned up
@@ -37,6 +38,7 @@ export interface Plan {
   is_locked_by_priority: boolean;
   video_count: number;  // only video files
   audio_count: number;  // only audio files
+  document_count: number; // only document files (images/pdf/office docs)
   watched_count: number; // all watched items
   next_video_id: number | null;
   next_video_title: string | null;

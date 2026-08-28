@@ -5,7 +5,7 @@ export const addPlan = (
   folderPath: string,
   name?: string,
 ): Promise<ScanReport> =>
-  invoke("add_plan", { folderPath, name: name ?? null, scanVideo: null, scanAudio: null, audioRole: null });
+  invoke("add_plan", { folderPath, name: name ?? null, scanVideo: null, scanAudio: null, scanDocument: null, audioRole: null });
 
 export const listPlans = (): Promise<Plan[]> => invoke("list_plans");
 
@@ -35,9 +35,10 @@ export const updatePlanMediaSettings = (
   planId: number,
   scanVideo: number,
   scanAudio: number,
+  scanDocument: number,
   audioRole: string,
 ): Promise<Plan> =>
-  invoke("update_plan_media_settings", { planId, scanVideo, scanAudio, audioRole });
+  invoke("update_plan_media_settings", { planId, scanVideo, scanAudio, scanDocument, audioRole });
 
 export const listBackgroundAudio = (): Promise<BackgroundAudioPlan[]> =>
   invoke("list_background_audio");

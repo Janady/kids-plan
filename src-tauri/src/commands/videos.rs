@@ -87,7 +87,7 @@ pub(crate) async fn recompute_plan_status(
             COALESCE(SUM(CASE WHEN status = 'watched' THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN status = 'not_watched' THEN 1 ELSE 0 END), 0)
          FROM videos
-         WHERE plan_id = ? AND NOT (? = 1 AND media_type = 'audio')",
+         WHERE plan_id = ? AND NOT (? = 1 AND media_type = 'audio') AND media_type != 'document'",
     )
     .bind(plan_id)
     .bind(is_background)
