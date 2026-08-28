@@ -6,6 +6,24 @@
   "permissions": [
     "core:default",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "file://*"
+        },
+        {
+          "url": "http://*"
+        },
+        {
+          "url": "https://*"
+        }
+      ]
+    },
     "dialog:default",
     "dialog:allow-open"
   ]
