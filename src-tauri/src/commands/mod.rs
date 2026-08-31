@@ -4,3 +4,4 @@ pub mod videos;
 pub mod sessions;
 pub mod schedule;
 pub mod stats;
+pub mod document_opener;

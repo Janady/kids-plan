@@ -5,7 +5,7 @@ mod thumbnail_cache;
 mod video_server;
 
 use cast::{cast_pause, cast_resume, cast_stop, cast_switch_video, discover_renderers, get_cast_state, start_cast, CastState};
-use commands::{plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
+use commands::{document_opener::open_document_with_system, plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
 use db::AppState;
 use thumbnail_cache::{cache_thumbnail, get_cached_thumbnail};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -66,6 +66,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(commands::document_opener::init())
         .setup(|app| {
             let data_dir = portable_data_dir(
                 app.path().app_data_dir().expect("Failed to resolve app data directory"),
@@ -109,6 +110,7 @@ pub fn run() {
             check_storage_accessible,
             list_dir,
             get_video_server_port,
+            open_document_with_system,
             get_cached_thumbnail,
             cache_thumbnail,
             get_setting,
