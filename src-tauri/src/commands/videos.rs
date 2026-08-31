@@ -22,6 +22,7 @@ pub struct Video {
     pub completed_reps: i64,
     pub last_rep_date: Option<String>,
     pub updated_at: String,
+    pub is_bg_track: i64, // 1 = explicitly selected as background music (see set_video_bg_track)
     // Not a DB column — filled after query by checking the disk.
     // false means the file was cleaned up (or is otherwise missing).
     #[sqlx(default)]
@@ -41,7 +42,7 @@ pub async fn list_videos_for_plan(
 ) -> Result<Vec<Video>, String> {
     let mut videos: Vec<Video> = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
-                progress_seconds, sort_order, media_type, required_reps, completed_reps, last_rep_date, updated_at
+                progress_seconds, sort_order, media_type, required_reps, completed_reps, last_rep_date, updated_at, is_bg_track
          FROM videos
          WHERE plan_id = ?
          ORDER BY
@@ -117,7 +118,7 @@ pub(crate) async fn recompute_plan_status(
 async fn fetch_video(db: &sqlx::SqlitePool, video_id: i64) -> Result<Video, String> {
     let mut v: Video = sqlx::query_as(
         "SELECT id, plan_id, file_path, title, duration_seconds, status,
-                progress_seconds, sort_order, media_type, required_reps, completed_reps, last_rep_date, updated_at
+                progress_seconds, sort_order, media_type, required_reps, completed_reps, last_rep_date, updated_at, is_bg_track
          FROM videos WHERE id = ?",
     )
     .bind(video_id)
@@ -385,6 +386,25 @@ pub async fn set_video_duration(
     sqlx::query("UPDATE videos SET duration_seconds = ?, updated_at = ? WHERE id = ?")
         .bind(duration_seconds)
         .bind(&now)
+        .bind(video_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Manually include/exclude a single audio file from its plan's background
+// music, overriding the "use every audio file" default (see
+// plans::resolve_bg_track_ids for how this combines with is_background).
+#[tauri::command]
+pub async fn set_video_bg_track(
+    state: State<'_, AppState>,
+    video_id: i64,
+    is_bg_track: i64,
+) -> Result<(), String> {
+    sqlx::query("UPDATE videos SET is_bg_track = ?, updated_at = ? WHERE id = ?")
+        .bind(is_bg_track)
+        .bind(now_str())
         .bind(video_id)
         .execute(&state.db)
         .await

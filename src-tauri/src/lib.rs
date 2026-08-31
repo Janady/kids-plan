@@ -132,6 +132,7 @@ pub fn run() {
             cleanup_videos,
             update_video_progress,
             set_video_duration,
+            set_video_bg_track,
             record_watch_tick,
             get_today_watched_seconds,
             get_today_audio_seconds,

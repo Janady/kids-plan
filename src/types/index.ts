@@ -66,6 +66,7 @@ export interface Video {
   completed_reps: number;
   last_rep_date: string | null;
   updated_at: string;
+  is_bg_track: number; // 0|1 — explicitly selected as background music
   file_exists: boolean; // false = file cleaned up / missing on disk
 }
 

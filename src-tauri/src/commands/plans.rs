@@ -996,24 +996,35 @@ struct BgRow {
     play_count_30d: i64,
 }
 
+// A background-enabled plan defaults to using every audio file. Checking any
+// individual file (is_bg_track=1) narrows that plan to only the checked
+// files, so users can scope background music to what they're currently
+// learning instead of the whole plan's audio.
+const BG_TRACK_FILTER: &str =
+    "AND (v.is_bg_track = 1 OR NOT EXISTS (
+        SELECT 1 FROM videos v2 WHERE v2.plan_id = v.plan_id AND v2.is_bg_track = 1
+    ))";
+
 #[tauri::command]
 pub async fn list_background_audio(
     state: State<'_, AppState>,
 ) -> Result<Vec<BackgroundAudioPlan>, String> {
-    let rows: Vec<BgRow> = sqlx::query_as(
+    let sql = format!(
         "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path,
                 COUNT(bp.id) AS play_count_30d
          FROM videos v
          JOIN plans p ON p.id = v.plan_id
          LEFT JOIN background_plays bp ON bp.video_id = v.id
               AND bp.played_at >= datetime('now', '-30 days')
-         WHERE p.is_background = 1 AND v.media_type = 'audio'
+         WHERE p.is_background = 1 AND v.media_type = 'audio' {}
          GROUP BY v.id
          ORDER BY p.id, v.sort_order",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
+        BG_TRACK_FILTER
+    );
+    let rows: Vec<BgRow> = sqlx::query_as(&sql)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut plans: Vec<BackgroundAudioPlan> = Vec::new();
     for row in rows {
@@ -1048,23 +1059,25 @@ pub async fn get_recent_background_tracks(
     limit: i64,
 ) -> Result<Vec<BackgroundTrack>, String> {
     let date_modifier = format!("-{} days", days);
-    let rows: Vec<BgRow> = sqlx::query_as(
+    let sql = format!(
         "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path,
                 COUNT(bp.id) AS play_count_30d
          FROM videos v
          JOIN plans p ON p.id = v.plan_id
          LEFT JOIN background_plays bp ON bp.video_id = v.id
               AND bp.played_at >= datetime('now', ?)
-         WHERE p.is_background = 1 AND v.media_type = 'audio'
+         WHERE p.is_background = 1 AND v.media_type = 'audio' {}
          GROUP BY v.id
          ORDER BY play_count_30d DESC, v.sort_order ASC
          LIMIT ?",
-    )
-    .bind(&date_modifier)
-    .bind(limit)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
+        BG_TRACK_FILTER
+    );
+    let rows: Vec<BgRow> = sqlx::query_as(&sql)
+        .bind(&date_modifier)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(rows
         .into_iter()

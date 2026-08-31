@@ -5,7 +5,7 @@ import {
   rescanPlan, deletePlan, activatePlan, deactivatePlan, listPlans, setPlanPriority,
   setPlanBackground, setPlanProtected, setPlanWeeklySchedule,
 } from "../api/plans";
-import { adjustVideoReps, batchAdjustPlanReps } from "../api/videos";
+import { adjustVideoReps, batchAdjustPlanReps, setVideoBgTrack } from "../api/videos";
 import { useState, useEffect } from "react";
 import { canOpenPlanMedia } from "../components/PlanCard";
 import type { Plan, Video, WeekdaySetting } from "../types";
@@ -332,7 +332,7 @@ function VideoTreeLevel({
 function AudioTab({
   videos, planId, plan, activating, isParentMode,
   onActivate, onDeactivate, onPriorityChange, onBackgroundToggle, onSaveWeeklySchedule,
-  onAdjustReps, onBatchAdjustReps,
+  onAdjustReps, onBatchAdjustReps, onSetBgTrack,
 }: {
   videos: Video[];
   planId: number;
@@ -346,6 +346,7 @@ function AudioTab({
   onSaveWeeklySchedule: (schedule: WeekdaySetting[]) => Promise<void>;
   onAdjustReps: (videoId: number, delta: number) => void;
   onBatchAdjustReps: (delta: number) => Promise<void>;
+  onSetBgTrack: (videoId: number, checked: boolean) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const { bgAudioPlans, bgSetTrack, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying } = useAppContext();
@@ -355,6 +356,10 @@ function AudioTab({
   const audioFiles = [...videos]
     .filter((v) => v.media_type === "audio")
     .sort((a, b) => a.sort_order - b.sort_order);
+  // Any file explicitly checked narrows the plan's background set to just the
+  // checked files (see backend BG_TRACK_FILTER); with none checked, every
+  // audio file in the plan is used.
+  const hasBgSelection = audioFiles.some((v) => v.is_bg_track === 1);
 
   const handleBgToggle = async (checked: boolean) => {
     setTogglingBg(true);
@@ -378,7 +383,9 @@ function AudioTab({
           <div>
             <span className="text-sm text-gray-200">🎶 同时作为背景音乐</span>
             <p className="text-[10px] text-gray-500 mt-0.5">
-              勾选后这些音频也会出现在背景播放器中，可随时自由播放
+              {hasBgSelection
+                ? "已勾选部分音频作为背景音乐，仅这些音频会出现在背景播放器中"
+                : "勾选后这些音频也会出现在背景播放器中；可在下方文件列表勾选具体音频缩小范围"}
             </p>
           </div>
         </label>
@@ -496,6 +503,21 @@ function AudioTab({
                 <span className="text-[10px] text-gray-600 shrink-0">{formatTime(v.duration_seconds)}</span>
               )}
               <div className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[v.status] ?? "bg-gray-600"}`} />
+              {isParentMode && plan.is_background === 1 && (
+                <label
+                  onClick={(e) => e.stopPropagation()}
+                  title="作为背景音乐（不勾选任何音频时默认全部作为背景音乐）"
+                  className="flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={v.is_bg_track === 1}
+                    onChange={(e) => onSetBgTrack(v.id, e.target.checked)}
+                    className="w-3.5 h-3.5 accent-purple-500"
+                  />
+                  <span className="text-[10px] text-purple-400">🎶</span>
+                </label>
+              )}
               {isParentMode && (
                 <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => onAdjustReps(v.id, -1)}
@@ -657,6 +679,12 @@ export default function PlanPage() {
   const handleBackgroundToggle = async (enabled: boolean) => {
     await setPlanBackground(id, enabled ? 1 : 0);
     await loadPlan();
+    await bgRefreshPlans();
+  };
+
+  const handleSetBgTrack = async (videoId: number, checked: boolean) => {
+    await setVideoBgTrack(videoId, checked);
+    await refresh();
     await bgRefreshPlans();
   };
 
@@ -859,6 +887,7 @@ export default function PlanPage() {
           onSaveWeeklySchedule={handleSaveWeeklySchedule}
           onAdjustReps={handleAdjustReps}
           onBatchAdjustReps={handleBatchAdjustReps}
+          onSetBgTrack={handleSetBgTrack}
         />
       )}
 

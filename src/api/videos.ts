@@ -33,6 +33,11 @@ export const setVideoDuration = (
   durationSeconds: number
 ): Promise<void> => invoke("set_video_duration", { videoId, durationSeconds });
 
+export const setVideoBgTrack = (
+  videoId: number,
+  isBgTrack: boolean
+): Promise<void> => invoke("set_video_bg_track", { videoId, isBgTrack: isBgTrack ? 1 : 0 });
+
 export const listCompletedForCleanup = (): Promise<CleanupPlan[]> =>
   invoke("list_completed_for_cleanup");
 
