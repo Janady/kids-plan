@@ -257,7 +257,15 @@ export default function PlayerPage() {
     if (!isParentMode) {
       await pauseSession();
       const el = mediaRef.current;
-      if (el && videoStatusRef.current !== "watched") await updateVideoProgress(vId, Math.floor(el.currentTime));
+      // Reaching the end of playback fires a native 'pause' event right before
+      // 'ended' (per the HTML5 media spec), so this can run concurrently with
+      // handleEnded's completeVideoRep call. Skip the progress write in that
+      // case — completeVideoRep is about to reset progress_seconds to 0 anyway,
+      // and racing an unguarded write against it here could either collide with
+      // completeVideoRep's transaction or silently stomp its reset afterward.
+      if (el && !el.ended && videoStatusRef.current !== "watched") {
+        await updateVideoProgress(vId, Math.floor(el.currentTime));
+      }
     }
   }, [pauseSession, notifyVideoPause, vId, isParentMode, isAudio]);
 
