@@ -39,7 +39,7 @@ export function BgFullscreenPlayer() {
   return (
     <div
       className="fixed inset-0 z-[70] flex flex-col"
-      style={{ background: "#0a0812" }}
+      style={{ background: "#0a0812", paddingTop: "var(--android-sat, env(safe-area-inset-top))" }}
     >
       {/* Top bar: collapse */}
       <div className="flex items-center justify-between px-5 py-4">

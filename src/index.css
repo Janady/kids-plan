@@ -4,6 +4,8 @@
   :root {
     font-family: Inter, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    /* Overridden from Android MainActivity with the real status-bar overlap. */
+    --android-sat: env(safe-area-inset-top, 0px);
   }
 
   *:focus-visible {

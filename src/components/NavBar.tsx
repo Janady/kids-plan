@@ -55,6 +55,7 @@ export function NavBar() {
 
   return (
     <>
+      <div className={!isTV ? "bg-gray-900" : undefined} style={!isTV ? { paddingTop: "var(--android-sat, env(safe-area-inset-top))" } : undefined}>
       {isParentMode && (
         <div className="bg-amber-900/60 border-b border-amber-700/50 px-4 py-1.5 text-xs text-amber-300 text-center">
           家长模式 · 播放不记录学习进度
@@ -120,6 +121,7 @@ export function NavBar() {
           )}
         </div>
       </nav>
+      </div>
 
       {showModal && (
         <PasswordModal

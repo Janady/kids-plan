@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { getVideoUrl } from "../api/videoSrc";
 import { recordBackgroundPlay } from "../api/sessions";
+import { setBackgroundPlayback } from "../api/backgroundPlayback";
 import { LoopIcon } from "./LoopIcon";
 import { PlayIcon, PauseIcon, PrevIcon, NextIcon } from "./MediaIcons";
 import type { LoopMode } from "../types";
@@ -56,6 +57,72 @@ export function BackgroundAudioPlayer() {
       el.pause();
     }
   }, [bgIsPlaying, currentTrack]);
+
+  // Keep a native Android foreground service running while music is playing so
+  // locking the screen doesn't freeze the WebView / audio server.
+  useEffect(() => {
+    if (bgIsPlaying && currentTrack) {
+      setBackgroundPlayback(true, currentTrack.title).catch(() => {});
+    } else {
+      setBackgroundPlayback(false).catch(() => {});
+    }
+  }, [bgIsPlaying, currentTrack]);
+
+  useEffect(() => {
+    return () => { setBackgroundPlayback(false).catch(() => {}); };
+  }, []);
+
+  // Lock-screen / headset media controls, and a hint to Chromium that this
+  // audio should continue while the document is hidden.
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    if (!currentTrack) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      return;
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentPlan?.name ?? "背景音乐",
+      album: "背景音乐",
+    });
+    navigator.mediaSession.playbackState = bgIsPlaying ? "playing" : "paused";
+    navigator.mediaSession.setActionHandler("play", () => { if (!bgIsPlaying) bgTogglePlay(); });
+    navigator.mediaSession.setActionHandler("pause", () => { if (bgIsPlaying) bgTogglePlay(); });
+    navigator.mediaSession.setActionHandler("previoustrack", () => bgPrev());
+    navigator.mediaSession.setActionHandler("nexttrack", () => bgNext());
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("previoustrack", null);
+      navigator.mediaSession.setActionHandler("nexttrack", null);
+    };
+  }, [currentTrack, currentPlan, bgIsPlaying, bgTogglePlay, bgPrev, bgNext]);
+
+  // If Chromium auto-pauses the element when the screen turns off, kick it
+  // back to playing as long as the user hasn't paused.
+  const bgIsPlayingRef = useRef(bgIsPlaying);
+  bgIsPlayingRef.current = bgIsPlaying;
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    const resumeIfNeeded = () => {
+      if (bgIsPlayingRef.current && el.paused && el.src) {
+        el.play().catch(() => {});
+      }
+    };
+    const onPause = () => {
+      if (bgIsPlayingRef.current && document.visibilityState === "hidden") {
+        el.play().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", resumeIfNeeded);
+    el.addEventListener("pause", onPause);
+    return () => {
+      document.removeEventListener("visibilitychange", resumeIfNeeded);
+      el.removeEventListener("pause", onPause);
+    };
+  }, [currentTrack]);
 
   const handleEnded = () => {
     if (bgLoopMode === "track") {

@@ -9,12 +9,16 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.webkit.WebView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : TauriActivity() {
+  private var webView: WebView? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
@@ -24,6 +28,56 @@ class MainActivity : TauriActivity() {
 
     requestStoragePermissions()
     requestAllFilesAccess()
+  }
+
+  override fun onWebViewCreate(webView: WebView) {
+    this.webView = webView
+    // Keep the renderer important while hidden so HTML audio isn't deprioritized
+    // the moment the screen turns off.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+    }
+    ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->
+      applyStatusBarInset(webView, insets)
+      insets
+    }
+    ViewCompat.requestApplyInsets(webView)
+    // Tauri loads the page after this callback; re-apply once the document exists
+    // so --android-sat isn't lost on the first navigation.
+    webView.postDelayed({ ViewCompat.requestApplyInsets(webView) }, 400)
+    webView.postDelayed({ ViewCompat.requestApplyInsets(webView) }, 1600)
+  }
+
+  // WryActivity.onPause() calls WebView.onPause(), which stops HTML media.
+  // Resume immediately while background music is playing so locking the screen
+  // doesn't cut the audio.
+  override fun onPause() {
+    super.onPause()
+    if (BgPlaybackService.isRunning) {
+      webView?.onResume()
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    webView?.let { ViewCompat.requestApplyInsets(it) }
+  }
+
+  // targetSdk 35+ draws edge-to-edge, so HTML `top:0` sits under the status bar.
+  // env(safe-area-inset-top) is unreliable in Android WebView; publish the
+  // overlap as --android-sat for CSS to consume. When the WebView is already
+  // laid out below the bar, overlap is 0 and we don't double-pad.
+  private fun applyStatusBarInset(view: WebView, insets: WindowInsetsCompat) {
+    val loc = IntArray(2)
+    view.getLocationOnScreen(loc)
+    val statusBarBottom = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+    val overlapPx = (statusBarBottom - loc[1]).coerceAtLeast(0)
+    val density = view.resources.displayMetrics.density
+    val sat = "${overlapPx / density}px"
+    view.evaluateJavascript(
+      "document.documentElement.style.setProperty('--android-sat','$sat')",
+      null
+    )
   }
 
   private fun requestStoragePermissions() {
