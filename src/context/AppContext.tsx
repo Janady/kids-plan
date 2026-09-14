@@ -39,7 +39,7 @@ export interface AppContextValue {
   bgIsPlaying: boolean;
   bgLoopMode: LoopMode;
   bgFullscreen: boolean;
-  bgRefreshPlans: () => Promise<void>;
+  bgRefreshPlans: () => Promise<BackgroundAudioPlan[]>;
   bgSetPlan: (planId: number) => void;
   bgSetTrack: (planId: number, idx: number) => void;
   bgSetScope: (planId: number | null) => void;

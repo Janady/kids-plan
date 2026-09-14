@@ -116,6 +116,7 @@ pub struct Plan {
     pub scan_document: i64,
     pub audio_role: String,
     pub is_background: i64, // 1 = audio files also appear in background player
+    pub bg_watched_video: i64, // 1 = watched videos also appear in background player (audio-only)
     pub is_protected: i64,  // 1 = plan and its files cannot be deleted/cleaned up
     pub weekly_schedule: String, // JSON array of 7 WeekdaySetting, Mon..Sun
     pub created_at: String,
@@ -136,6 +137,7 @@ pub struct PlanWithCounts {
     pub scan_document: i64,
     pub audio_role: String,
     pub is_background: i64,
+    pub bg_watched_video: i64,
     pub is_protected: i64,
     pub weekly_schedule: Vec<WeekdaySetting>,
     pub is_locked_by_priority: bool,
@@ -181,6 +183,7 @@ struct PlanRow {
     scan_document: i64,
     audio_role: String,
     is_background: i64,
+    bg_watched_video: i64,
     is_protected: i64,
     weekly_schedule: String,
     video_count: i64,
@@ -341,6 +344,7 @@ fn build_plan_with_counts(
         scan_document: r.scan_document,
         audio_role: r.audio_role,
         is_background: r.is_background,
+        bg_watched_video: r.bg_watched_video,
         is_protected: r.is_protected,
         weekly_schedule: parse_weekly_schedule(&r.weekly_schedule),
         is_locked_by_priority,
@@ -467,7 +471,7 @@ fn scan_media_files(
 
 const PLAN_SELECT: &str =
     "SELECT p.id, p.name, p.folder_path, p.status, p.episodes_per_day, p.daily_schedule_active,
-            p.priority, p.scan_video, p.scan_audio, p.scan_document, p.audio_role, p.is_background, p.is_protected,
+            p.priority, p.scan_video, p.scan_audio, p.scan_document, p.audio_role, p.is_background, p.bg_watched_video, p.is_protected,
             p.weekly_schedule, p.created_at, p.updated_at,
             COUNT(CASE WHEN v.media_type = 'video' THEN 1 END) as video_count,
             COUNT(CASE WHEN v.media_type = 'audio' THEN 1 END) as audio_count,
@@ -588,6 +592,7 @@ pub async fn add_plan(
         scan_document: sd,
         audio_role: ar,
         is_background: 0,
+        bg_watched_video: 0,
         is_protected: 0,
         weekly_schedule: default_week(),
         is_locked_by_priority: false,
@@ -976,6 +981,7 @@ pub struct BackgroundTrack {
     pub plan_name: String,
     pub title: String,
     pub file_path: String,
+    pub media_type: String,
     pub play_count_30d: i64,
 }
 
@@ -993,33 +999,48 @@ struct BgRow {
     plan_name: String,
     title: String,
     file_path: String,
+    media_type: String,
     play_count_30d: i64,
 }
 
 // A background-enabled plan defaults to using every audio file. Checking any
 // individual file (is_bg_track=1) narrows that plan to only the checked
 // files, so users can scope background music to what they're currently
-// learning instead of the whole plan's audio.
+// learning instead of the whole plan's audio. The same narrowing applies to
+// watched videos when bg_watched_video=1. NOT EXISTS is scoped by media_type
+// so pinning a video as a bg track cannot hide the plan's unpinned audio.
 const BG_TRACK_FILTER: &str =
     "AND (v.is_bg_track = 1 OR NOT EXISTS (
-        SELECT 1 FROM videos v2 WHERE v2.plan_id = v.plan_id AND v2.is_bg_track = 1
+        SELECT 1 FROM videos v2
+        WHERE v2.plan_id = v.plan_id AND v2.is_bg_track = 1 AND v2.media_type = v.media_type
     ))";
+
+// Audio from is_background plans, plus watched videos that are either in a
+// bg_watched_video plan or explicitly pinned via is_bg_track.
+const BG_SOURCE_FILTER: &str =
+    "WHERE (
+        (p.is_background = 1 AND v.media_type = 'audio')
+        OR (
+            v.media_type = 'video' AND v.status = 'watched'
+            AND (p.bg_watched_video = 1 OR v.is_bg_track = 1)
+        )
+     )";
 
 #[tauri::command]
 pub async fn list_background_audio(
     state: State<'_, AppState>,
 ) -> Result<Vec<BackgroundAudioPlan>, String> {
     let sql = format!(
-        "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path,
+        "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path, v.media_type,
                 COUNT(bp.id) AS play_count_30d
          FROM videos v
          JOIN plans p ON p.id = v.plan_id
          LEFT JOIN background_plays bp ON bp.video_id = v.id
               AND bp.played_at >= datetime('now', '-30 days')
-         WHERE p.is_background = 1 AND v.media_type = 'audio' {}
+         {} {}
          GROUP BY v.id
          ORDER BY p.id, v.sort_order",
-        BG_TRACK_FILTER
+        BG_SOURCE_FILTER, BG_TRACK_FILTER
     );
     let rows: Vec<BgRow> = sqlx::query_as(&sql)
         .fetch_all(&state.db)
@@ -1045,6 +1066,7 @@ pub async fn list_background_audio(
             plan_name: row.plan_name,
             title: row.title,
             file_path: row.file_path,
+            media_type: row.media_type,
             play_count_30d: row.play_count_30d,
         });
     }
@@ -1060,17 +1082,17 @@ pub async fn get_recent_background_tracks(
 ) -> Result<Vec<BackgroundTrack>, String> {
     let date_modifier = format!("-{} days", days);
     let sql = format!(
-        "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path,
+        "SELECT v.id, v.plan_id, p.name AS plan_name, v.title, v.file_path, v.media_type,
                 COUNT(bp.id) AS play_count_30d
          FROM videos v
          JOIN plans p ON p.id = v.plan_id
          LEFT JOIN background_plays bp ON bp.video_id = v.id
               AND bp.played_at >= datetime('now', ?)
-         WHERE p.is_background = 1 AND v.media_type = 'audio' {}
+         {} {}
          GROUP BY v.id
          ORDER BY play_count_30d DESC, v.sort_order ASC
          LIMIT ?",
-        BG_TRACK_FILTER
+        BG_SOURCE_FILTER, BG_TRACK_FILTER
     );
     let rows: Vec<BgRow> = sqlx::query_as(&sql)
         .bind(&date_modifier)
@@ -1087,6 +1109,7 @@ pub async fn get_recent_background_tracks(
             plan_name: row.plan_name,
             title: row.title,
             file_path: row.file_path,
+            media_type: row.media_type,
             play_count_30d: row.play_count_30d,
         })
         .collect())
@@ -1097,6 +1120,63 @@ pub async fn delete_background_track(
     state: State<'_, AppState>,
     video_id: i64,
 ) -> Result<(), String> {
+    let row: Option<(String, i64)> = sqlx::query_as(
+        "SELECT media_type, plan_id FROM videos WHERE id = ?",
+    )
+    .bind(video_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some((media_type, plan_id)) = row else {
+        return Ok(());
+    };
+
+    // Watched videos stay in the learning plan — only unpin them from the
+    // background player. If the plan was including every watched video,
+    // freeze the current set minus this file as an explicit selection.
+    if media_type == "video" {
+        let now = now_str();
+        let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+        let (bg_watched_video,): (i64,) = sqlx::query_as(
+            "SELECT bg_watched_video FROM plans WHERE id = ?",
+        )
+        .bind(plan_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if bg_watched_video == 1 {
+            sqlx::query(
+                "UPDATE videos SET is_bg_track = 1, updated_at = ?
+                 WHERE plan_id = ? AND media_type = 'video' AND status = 'watched' AND id != ?",
+            )
+            .bind(&now)
+            .bind(plan_id)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            sqlx::query("UPDATE plans SET bg_watched_video = 0, updated_at = ? WHERE id = ?")
+                .bind(&now)
+                .bind(plan_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        sqlx::query("UPDATE videos SET is_bg_track = 0, updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(video_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     sqlx::query("DELETE FROM videos WHERE id = ?")
         .bind(video_id)
         .execute(&state.db)
@@ -1118,6 +1198,39 @@ pub async fn set_plan_background(
         .execute(&state.db)
         .await
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_plan_bg_watched_video(
+    state: State<'_, AppState>,
+    plan_id: i64,
+    bg_watched_video: i64,
+) -> Result<(), String> {
+    let now = now_str();
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("UPDATE plans SET bg_watched_video = ?, updated_at = ? WHERE id = ?")
+        .bind(bg_watched_video)
+        .bind(&now)
+        .bind(plan_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Turning the plan-level switch on means "every watched video". Clear any
+    // leftover per-file pins so a previous explicit selection cannot silently
+    // narrow the list.
+    if bg_watched_video == 1 {
+        sqlx::query(
+            "UPDATE videos SET is_bg_track = 0, updated_at = ?
+             WHERE plan_id = ? AND media_type = 'video'",
+        )
+        .bind(&now)
+        .bind(plan_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 

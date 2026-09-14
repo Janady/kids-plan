@@ -33,6 +33,7 @@ export interface Plan {
   scan_document: number; // 0|1
   audio_role: AudioRole;
   is_background: number; // 0|1 — audio files also appear in background player
+  bg_watched_video: number; // 0|1 — watched videos also appear in background player (audio-only)
   is_protected: number; // 0|1 — plan and its files cannot be deleted/cleaned up
   weekly_schedule: WeekdaySetting[]; // length 7, index 0=Monday..6=Sunday
   is_locked_by_priority: boolean;
@@ -162,6 +163,7 @@ export interface BackgroundTrack {
   plan_name: string;
   title: string;
   file_path: string;
+  media_type: MediaType;
   play_count_30d: number;
 }
 

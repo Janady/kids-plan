@@ -55,5 +55,8 @@ export const deleteBackgroundTrack = (videoId: number): Promise<void> =>
 export const setPlanBackground = (planId: number, isBackground: number): Promise<void> =>
   invoke("set_plan_background", { planId, isBackground });
 
+export const setPlanBgWatchedVideo = (planId: number, enabled: number): Promise<void> =>
+  invoke("set_plan_bg_watched_video", { planId, bgWatchedVideo: enabled });
+
 export const setPlanProtected = (planId: number, isProtected: number): Promise<void> =>
   invoke("set_plan_protected", { planId, isProtected });

@@ -642,7 +642,7 @@ export default function HomePage() {
           {bgTopTracks.length === 0 ? (
             /* No tracks yet — prompt to pick a plan */
             <div className="px-4 py-3 bg-purple-900/10 border border-purple-900/30 rounded-lg text-sm text-gray-500">
-              还没有音频被设为背景音乐。在计划页的音频 Tab 中勾选「同时作为背景音乐」即可加入。
+              还没有背景音乐。在计划页的音频 Tab 勾选「同时作为背景音乐」，或在视频 Tab 把已看视频设为背景音。
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">

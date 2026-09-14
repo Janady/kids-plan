@@ -90,7 +90,7 @@ export function PlanCard({ plan }: Props) {
           {plan.video_count > 0 && <span>🎬 {plan.video_count}</span>}
           {plan.audio_count > 0 && <span>🎵 {plan.audio_count}</span>}
           {plan.document_count > 0 && <span>📄 {plan.document_count}</span>}
-          {plan.is_background === 1 && <span className="text-purple-400">🎶</span>}
+          {(plan.is_background === 1 || plan.bg_watched_video === 1) && <span className="text-purple-400">🎶</span>}
           {plan.is_protected === 1 && <span className="text-amber-400">🔒</span>}
           {plan.priority > 0 && (
             <span className={`px-1.5 py-0.5 rounded ${PRIORITY_BADGE[plan.priority]}`}>

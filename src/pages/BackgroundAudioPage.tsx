@@ -14,7 +14,7 @@ export default function BackgroundAudioPage() {
   useEffect(() => { bgRefreshPlans(); }, [bgRefreshPlans]);
 
   const handleDelete = async (videoId: number) => {
-    if (!confirm("确认将此音频从背景音乐中移除？（重新扫描后可恢复）")) return;
+    if (!confirm("确认将此条目从背景音乐中移除？（音频会从计划中拿掉，重新扫描后可恢复；已看视频只会取消背景标记，学习记录仍保留）")) return;
     setDeleting(videoId);
     try {
       await deleteBackgroundTrack(videoId);
@@ -43,7 +43,7 @@ export default function BackgroundAudioPage() {
           <p className="text-3xl mb-3">🎶</p>
           <p className="text-gray-400 mb-1">还没有背景音乐</p>
           <p className="text-sm text-gray-600 mb-4">
-            在计划页面的音频 Tab 中，勾选「同时作为背景音乐」即可加入
+            在计划页的音频 Tab 勾选「同时作为背景音乐」，或在视频 Tab 把已看视频设为背景音
           </p>
           <button
             onClick={() => navigate("/")}

@@ -96,6 +96,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (prev !== null && plans.some((p) => p.id === prev)) return prev;
       return plans.length > 0 ? plans[0].id : null;
     });
+    return plans;
   }, []);
 
   useEffect(() => {

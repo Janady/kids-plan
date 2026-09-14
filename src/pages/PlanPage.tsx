@@ -3,7 +3,7 @@ import { useVideos } from "../hooks/useVideos";
 import { useAppContext } from "../context/AppContext";
 import {
   rescanPlan, deletePlan, activatePlan, deactivatePlan, listPlans, setPlanPriority,
-  setPlanBackground, setPlanProtected, setPlanWeeklySchedule,
+  setPlanBackground, setPlanBgWatchedVideo, setPlanProtected, setPlanWeeklySchedule,
 } from "../api/plans";
 import { adjustVideoReps, batchAdjustPlanReps, setVideoBgTrack } from "../api/videos";
 import { useState, useEffect } from "react";
@@ -179,17 +179,25 @@ const STATUS_DOT: Record<string, string> = {
 // ─── Video file node ──────────────────────────────────────────────────────────
 
 function VideoFileNode({
-  node, planId, isParentMode, episodeNum, onAdjustReps,
+  node, planId, isParentMode, episodeNum, onAdjustReps, onSetBgTrack, onListenAsAudio,
 }: {
   node: TreeNode; planId: number; isLocked: boolean; isParentMode: boolean; episodeNum: number;
   onAdjustReps: (videoId: number, delta: number) => void;
+  onSetBgTrack: (videoId: number, checked: boolean) => void;
+  onListenAsAudio: (video: Video) => void;
 }) {
   const navigate = useNavigate();
-  const { isCastActive, castSnapshot, switchCastVideo } = useAppContext();
+  const { isCastActive, castSnapshot, switchCastVideo, bgAudioPlans, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying } = useAppContext();
   const video = node.video!;
   const cleared = video.file_exists === false; // file removed to free space
   const locked = cleared || !canOpenPlanMedia(isParentMode, video.status);
   const isCastingThis = castSnapshot?.current?.video_id === video.id;
+  const canListen = video.status === "watched" && !cleared;
+  const isBgPlaying =
+    canListen &&
+    bgIsPlaying &&
+    bgCurrentPlanId === planId &&
+    bgAudioPlans.find((p) => p.id === planId)?.tracks[bgCurrentTrackIdx]?.id === video.id;
   const pct = video.status === "watching" && video.duration_seconds
     ? Math.min(100, (video.progress_seconds / video.duration_seconds) * 100) : 0;
 
@@ -219,6 +227,8 @@ function VideoFileNode({
           ? "border-gray-800 bg-gray-900/30 cursor-not-allowed"
           : locked
           ? "border-gray-800 opacity-40 cursor-not-allowed bg-gray-900/30"
+          : isBgPlaying
+          ? "border-purple-700/60 bg-purple-900/20 hover:border-purple-500 cursor-pointer"
           : video.status === "watching"
           ? "border-yellow-700/50 bg-gray-800 hover:border-yellow-500 cursor-pointer"
           : "border-gray-700/50 bg-gray-800 hover:border-sky-600 cursor-pointer"
@@ -229,7 +239,7 @@ function VideoFileNode({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-gray-600 shrink-0">{episodeNum}</span>
-          <span className={`text-sm truncate ${cleared ? "text-gray-500 line-through" : "text-gray-200"}`}>{video.title}</span>
+          <span className={`text-sm truncate ${cleared ? "text-gray-500 line-through" : isBgPlaying ? "text-purple-300" : "text-gray-200"}`}>{video.title}</span>
           {video.status === "watched" && !cleared && (
             <span className="text-[10px] text-green-500 shrink-0">
               {video.completed_reps > 0 ? "已学" : "无需学习"}
@@ -258,6 +268,34 @@ function VideoFileNode({
       {!cleared && video.duration_seconds && (
         <span className="text-[10px] text-gray-600 shrink-0">{formatTime(video.duration_seconds)}</span>
       )}
+      {canListen && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onListenAsAudio(video); }}
+          className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 transition-colors ${
+            isBgPlaying
+              ? "text-purple-200 bg-purple-800/60"
+              : "text-purple-300 hover:text-purple-200 hover:bg-purple-900/40"
+          }`}
+          title="只播声音，不占视频时长"
+        >
+          {isBgPlaying ? "♪ 播放中" : "♪ 听"}
+        </button>
+      )}
+      {isParentMode && canListen && (
+        <label
+          onClick={(e) => e.stopPropagation()}
+          title="作为背景音乐（不勾选任何视频时，开启计划开关则全部已看视频都会进入）"
+          className="flex items-center gap-1 shrink-0 cursor-pointer"
+        >
+          <input
+            type="checkbox"
+            checked={video.is_bg_track === 1}
+            onChange={(e) => onSetBgTrack(video.id, e.target.checked)}
+            className="w-3.5 h-3.5 accent-purple-500"
+          />
+          <span className="text-[10px] text-purple-400">🎶</span>
+        </label>
+      )}
       {isParentMode && (
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => onAdjustReps(video.id, -1)}
@@ -282,10 +320,12 @@ function countTypeInTree(node: TreeNode): { video: number; audio: number } {
 }
 
 function VideoFolderNode({
-  node, planId, isLocked, isParentMode, episodeCounter, onAdjustReps,
+  node, planId, isLocked, isParentMode, episodeCounter, onAdjustReps, onSetBgTrack, onListenAsAudio,
 }: {
   node: TreeNode; planId: number; isLocked: boolean; isParentMode: boolean; episodeCounter: { n: number };
   onAdjustReps: (videoId: number, delta: number) => void;
+  onSetBgTrack: (videoId: number, checked: boolean) => void;
+  onListenAsAudio: (video: Video) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const counts = countTypeInTree(node);
@@ -301,7 +341,7 @@ function VideoFolderNode({
       </button>
       {expanded && (
         <div className="ml-4 mt-1 flex flex-col gap-1">
-          <VideoTreeLevel nodes={node.children} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} onAdjustReps={onAdjustReps} />
+          <VideoTreeLevel nodes={node.children} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} onAdjustReps={onAdjustReps} onSetBgTrack={onSetBgTrack} onListenAsAudio={onListenAsAudio} />
         </div>
       )}
     </div>
@@ -309,18 +349,20 @@ function VideoFolderNode({
 }
 
 function VideoTreeLevel({
-  nodes, planId, isLocked, isParentMode, episodeCounter, onAdjustReps,
+  nodes, planId, isLocked, isParentMode, episodeCounter, onAdjustReps, onSetBgTrack, onListenAsAudio,
 }: {
   nodes: TreeNode[]; planId: number; isLocked: boolean; isParentMode: boolean; episodeCounter: { n: number };
   onAdjustReps: (videoId: number, delta: number) => void;
+  onSetBgTrack: (videoId: number, checked: boolean) => void;
+  onListenAsAudio: (video: Video) => void;
 }) {
   return (
     <>
       {nodes.map((node, i) =>
         node.type === "folder" ? (
-          <VideoFolderNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} onAdjustReps={onAdjustReps} />
+          <VideoFolderNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeCounter={episodeCounter} onAdjustReps={onAdjustReps} onSetBgTrack={onSetBgTrack} onListenAsAudio={onListenAsAudio} />
         ) : node.video?.media_type === "video" ? (
-          <VideoFileNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeNum={++episodeCounter.n} onAdjustReps={onAdjustReps} />
+          <VideoFileNode key={i} node={node} planId={planId} isLocked={isLocked} isParentMode={isParentMode} episodeNum={++episodeCounter.n} onAdjustReps={onAdjustReps} onSetBgTrack={onSetBgTrack} onListenAsAudio={onListenAsAudio} />
         ) : null
       )}
     </>
@@ -596,7 +638,7 @@ export default function PlanPage() {
   const location = useLocation();
   const id = Number(planId);
   const { videos, loading, error, refresh } = useVideos(id);
-  const { isLimitExceeded, isParentMode, bgRefreshPlans } = useAppContext();
+  const { isLimitExceeded, isParentMode, bgRefreshPlans, bgSetTrack, bgAudioPlans } = useAppContext();
   const [rescanning, setRescanning] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [activating, setActivating] = useState(false);
@@ -688,6 +730,31 @@ export default function PlanPage() {
     await bgRefreshPlans();
   };
 
+  const handleBgWatchedVideoToggle = async (enabled: boolean) => {
+    await setPlanBgWatchedVideo(id, enabled ? 1 : 0);
+    await loadPlan();
+    await refresh();
+    await bgRefreshPlans();
+  };
+
+  const handleListenAsAudio = async (video: Video) => {
+    const findIdx = (plans: typeof bgAudioPlans) =>
+      plans.find((p) => p.id === id)?.tracks.findIndex((t) => t.id === video.id) ?? -1;
+
+    let idx = findIdx(bgAudioPlans);
+    if (idx < 0) {
+      let plans = await bgRefreshPlans();
+      idx = findIdx(plans);
+      if (idx < 0) {
+        await setVideoBgTrack(video.id, true);
+        await refresh();
+        plans = await bgRefreshPlans();
+        idx = findIdx(plans);
+      }
+    }
+    if (idx >= 0) bgSetTrack(id, idx);
+  };
+
   const handleSaveWeeklySchedule = async (schedule: WeekdaySetting[]) => {
     await setPlanWeeklySchedule(id, schedule);
     await loadPlan();
@@ -750,7 +817,7 @@ export default function PlanPage() {
             {plan.video_count > 0 && <span>🎬 {plan.video_count} 视频</span>}
             {plan.audio_count > 0 && <span>🎵 {plan.audio_count} 音频</span>}
             {plan.document_count > 0 && <span>📄 {plan.document_count} 文档</span>}
-            {plan.is_background === 1 && <span className="text-purple-400">· 🎶 背景音乐</span>}
+            {(plan.is_background === 1 || plan.bg_watched_video === 1) && <span className="text-purple-400">· 🎶 背景音乐</span>}
             {plan.is_protected === 1 && <span className="text-amber-400">· 🔒 已保护</span>}
             {plan.watched_count > 0 && <span>· {plan.watched_count} 已完成</span>}
           </div>
@@ -800,6 +867,23 @@ export default function PlanPage() {
       {/* ── Video Tab ── */}
       {(activeTab === "video" || !showTabs) && hasVideo && plan && (
         <div>
+          {isParentMode && <div className="px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg mb-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={plan.bg_watched_video === 1}
+                onChange={(e) => handleBgWatchedVideoToggle(e.target.checked)}
+                className="w-4 h-4 accent-purple-500"
+              />
+              <div>
+                <span className="text-sm text-gray-200">🎶 已看视频作为背景音</span>
+                <p className="text-[10px] text-gray-500 mt-0.5">
+                  只出声、不占视频时长；未看完的不会进入。也可在下方已看条目上点「听」或勾选单曲。
+                </p>
+              </div>
+            </label>
+          </div>}
+
           {/* Priority + batch reps */}
           {isParentMode && <div className="flex items-center gap-3 flex-wrap mb-3">
             <span className="text-xs text-gray-500">优先级</span>
@@ -866,7 +950,20 @@ export default function PlanPage() {
           )}
           {videoTree.length > 0 && (
             <div className="flex flex-col gap-1">
-              <VideoTreeLevel nodes={videoTree} planId={id} isLocked={isLockedOverall} isParentMode={isParentMode} episodeCounter={{ n: 0 }} onAdjustReps={handleAdjustReps} />
+              <VideoTreeLevel nodes={videoTree} planId={id} isLocked={isLockedOverall} isParentMode={isParentMode} episodeCounter={{ n: 0 }} onAdjustReps={handleAdjustReps} onSetBgTrack={handleSetBgTrack} onListenAsAudio={handleListenAsAudio} />
+            </div>
+          )}
+          {bgAudioPlans.find((p) => p.id === id) && (
+            <div className="mt-2 px-4 py-2.5 bg-purple-900/10 border border-purple-900/30 rounded-lg">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-purple-400">🎶 在背景播放器中播放</span>
+                <button
+                  onClick={() => bgSetTrack(id, 0)}
+                  className="text-xs text-purple-300 hover:text-purple-200 transition-colors"
+                >
+                  从头开始 ▶
+                </button>
+              </div>
             </div>
           )}
         </div>
