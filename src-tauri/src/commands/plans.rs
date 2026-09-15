@@ -1,3 +1,4 @@
+use crate::commands::tags::{fetch_all_plan_tags, fetch_plan_tags, Tag};
 use crate::db::AppState;
 use chrono::{Datelike, Local};
 use serde::{Deserialize, Serialize};
@@ -153,6 +154,8 @@ pub struct PlanWithCounts {
     pub next_video_sort_order: Option<i64>,
     pub next_video_media_type: Option<String>,
     pub recent_videos: Vec<PlanPreviewVideo>,
+    #[serde(default)]
+    pub tags: Vec<Tag>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -330,6 +333,7 @@ fn build_plan_with_counts(
     next: Option<NextVideoRow>,
     is_locked_by_priority: bool,
     recent_videos: Vec<PlanPreviewVideo>,
+    tags: Vec<Tag>,
 ) -> PlanWithCounts {
     PlanWithCounts {
         id: r.id,
@@ -360,6 +364,7 @@ fn build_plan_with_counts(
         next_video_sort_order: next.as_ref().map(|n| n.sort_order),
         next_video_media_type: next.as_ref().map(|n| n.media_type.clone()),
         recent_videos,
+        tags,
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
@@ -608,6 +613,7 @@ pub async fn add_plan(
         next_video_sort_order: next.as_ref().map(|n| n.sort_order),
         next_video_media_type: next.as_ref().map(|n| n.media_type.clone()),
         recent_videos: fetch_recent_videos(&state.db, plan_id).await?,
+        tags: Vec::new(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -682,12 +688,14 @@ pub async fn list_plans(state: State<'_, AppState>) -> Result<Vec<PlanWithCounts
         }
     }
 
+    let mut tags_map = fetch_all_plan_tags(&state.db).await?;
     let mut results = Vec::with_capacity(rows.len());
     for r in rows {
         let is_locked = max_blocking > 0 && r.priority < max_blocking;
         let next = fetch_next_video(&state.db, r.id, &r.status).await?;
         let recent = fetch_recent_videos(&state.db, r.id).await?;
-        results.push(build_plan_with_counts(r, next, is_locked, recent));
+        let tags = tags_map.remove(&r.id).unwrap_or_default();
+        results.push(build_plan_with_counts(r, next, is_locked, recent, tags));
     }
     Ok(results)
 }
@@ -702,6 +710,12 @@ pub async fn delete_plan(state: State<'_, AppState>, plan_id: i64) -> Result<(),
     if is_protected != 0 {
         return Err("该计划已受保护，无法删除。请先取消保护".to_string());
     }
+
+    sqlx::query("DELETE FROM plan_tags WHERE plan_id = ?")
+        .bind(plan_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
 
     sqlx::query("DELETE FROM plans WHERE id = ?")
         .bind(plan_id)
@@ -832,7 +846,8 @@ pub async fn rescan_plan(
 
     let next = fetch_next_video(&state.db, row.id, &row.status).await?;
     let recent = fetch_recent_videos(&state.db, row.id).await?;
-    let plan = build_plan_with_counts(row, next, false, recent);
+    let tags = fetch_plan_tags(&state.db, plan_id).await?;
+    let plan = build_plan_with_counts(row, next, false, recent, tags);
     Ok(ScanReport {
         found,
         added: owned_here,

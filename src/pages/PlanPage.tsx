@@ -8,6 +8,7 @@ import {
 import { adjustVideoReps, batchAdjustPlanReps, setVideoBgTrack } from "../api/videos";
 import { useState, useEffect } from "react";
 import { canOpenPlanMedia } from "../components/PlanCard";
+import { TagEditor } from "../components/Tags";
 import type { Plan, Video, WeekdaySetting } from "../types";
 
 // ─── Priority ────────────────────────────────────────────────────────────────
@@ -813,7 +814,7 @@ export default function PlanPage() {
       {plan && (
         <div className="mb-5">
           <h1 className="text-xl font-bold text-gray-100 mb-1">{plan.name}</h1>
-          <div className="flex items-center gap-2 text-[10px] text-gray-500 mb-4">
+          <div className="flex items-center gap-2 text-[10px] text-gray-500">
             {plan.video_count > 0 && <span>🎬 {plan.video_count} 视频</span>}
             {plan.audio_count > 0 && <span>🎵 {plan.audio_count} 音频</span>}
             {plan.document_count > 0 && <span>📄 {plan.document_count} 文档</span>}
@@ -821,6 +822,12 @@ export default function PlanPage() {
             {plan.is_protected === 1 && <span className="text-amber-400">· 🔒 已保护</span>}
             {plan.watched_count > 0 && <span>· {plan.watched_count} 已完成</span>}
           </div>
+          <TagEditor
+            planId={id}
+            boundTags={plan.tags ?? []}
+            editable={isParentMode}
+            onChange={loadPlan}
+          />
         </div>
       )}
 

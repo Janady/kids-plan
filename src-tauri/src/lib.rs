@@ -5,7 +5,7 @@ mod thumbnail_cache;
 mod video_server;
 
 use cast::{cast_pause, cast_resume, cast_stop, cast_switch_video, discover_renderers, get_cast_state, start_cast, CastState};
-use commands::{background_playback::set_background_playback, document_opener::open_document_with_system, plans::*, schedule::*, sessions::*, settings::*, stats::*, videos::*};
+use commands::{background_playback::set_background_playback, document_opener::open_document_with_system, plans::*, schedule::*, sessions::*, settings::*, stats::*, tags::*, videos::*};
 use db::AppState;
 use thumbnail_cache::{cache_thumbnail, get_cached_thumbnail};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -152,6 +152,12 @@ pub fn run() {
             get_overall_stats,
             set_plan_priority,
             set_plan_weekly_schedule,
+            list_tags,
+            create_tag,
+            update_tag,
+            delete_tag,
+            bind_plan_tag,
+            unbind_plan_tag,
             adjust_video_reps,
             batch_adjust_plan_reps,
             complete_video_rep,

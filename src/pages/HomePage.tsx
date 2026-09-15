@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getTodaySchedule } from "../api/schedule";
 import { listPlans } from "../api/plans";
 import { markVideoWatchedEarlier } from "../api/videos";
@@ -8,6 +8,7 @@ import { getCachedThumbnail, cacheThumbnail } from "../api/thumbnails";
 import { useAppContext } from "../context/AppContext";
 import { usePlatform } from "../hooks/usePlatform";
 import { CastDevicePickerModal } from "../components/CastDevicePickerModal";
+import { parseTagIdsParam, planMatchesTags, TagFilterBar, uniqueTags } from "../components/Tags";
 import type { TodayPlanItem, TodayPendingItem, Plan, CastQueueItem } from "../types";
 
 function formatTime(s: number): string {
@@ -403,11 +404,13 @@ function BlankPracticeCard({ planId, planName, minutes }: { planId: number; plan
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isLimitExceeded, todayWatchedSeconds, todayAudioSeconds, dailyLimitSeconds, bgAudioPlans, bgSetTrack, bgCurrentPlanId, bgCurrentTrackIdx, bgIsPlaying, bgSetFullscreen, isParentMode, toggleParentMode } = useAppContext();
   const { isTV, isAndroid } = usePlatform();
   const [todayItems, setTodayItems] = useState<TodayPlanItem[]>([]);
   const [allPlans, setAllPlans] = useState<Plan[]>([]);
   const [showCastPicker, setShowCastPicker] = useState(false);
+  const selectedTagIds = parseTagIdsParam(searchParams.get("tags"));
 
   // Flatten background tracks from AppContext (already loaded, includes play_count_30d)
   const bgTopTracks = bgAudioPlans
@@ -446,6 +449,16 @@ export default function HomePage() {
 
   const pendingBlankPractices = todayItems.filter((item) => item.blank_practice && !item.blank_practice.completed);
   const completedBlankPractices = todayItems.filter((item) => item.blank_practice?.completed);
+
+  const todayPlanIds = new Set(todayItems.map((item) => item.plan_id));
+  const filterTags = uniqueTags(allPlans.filter((p) => todayPlanIds.has(p.id)));
+  const visiblePendingTasks = allPendingTasks.filter(({ planId }) =>
+    planMatchesTags(planMap.get(planId), selectedTagIds),
+  );
+  const visibleBlankPractices = pendingBlankPractices.filter((item) =>
+    planMatchesTags(planMap.get(item.plan_id), selectedTagIds),
+  );
+  const filterEmpty = selectedTagIds.length > 0 && visiblePendingTasks.length === 0 && visibleBlankPractices.length === 0;
 
   const hasActivePlans = todayItems.length > 0;
   const allDoneToday = hasActivePlans && allPendingTasks.length === 0 && pendingBlankPractices.length === 0;
@@ -569,27 +582,40 @@ export default function HomePage() {
         </div>
       ) : (
         <div className="mb-8">
-          {/* Responsive grid: 1 col on mobile, 2 on sm, 3 on lg, 4 on xl; TV: fixed 3 cols */}
-          <div className={`grid gap-4 ${isTV ? "grid-cols-3" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
-            {allPendingTasks.map(({ task, planId, planName }) => (
-              <TaskCard
-                key={task.video_id}
-                task={task}
-                planId={planId}
-                planName={planName}
-                isLocked={isLimitExceeded || !!(planMap.get(planId)?.is_locked_by_priority)}
-                onMarkWatched={handleMarkWatched}
-              />
-            ))}
-            {pendingBlankPractices.map((item) => (
-              <BlankPracticeCard
-                key={`blank-${item.plan_id}`}
-                planId={item.plan_id}
-                planName={item.plan_name}
-                minutes={item.blank_practice!.minutes}
-              />
-            ))}
-          </div>
+          {filterTags.length > 0 && (
+            <TagFilterBar
+              tags={filterTags}
+              selectedIds={selectedTagIds}
+              onChange={(ids) => setSearchParams(ids.length ? { tags: ids.join(",") } : {})}
+            />
+          )}
+          {filterEmpty ? (
+            <div className="bg-gray-800/40 border border-dashed border-gray-700 rounded-xl px-6 py-10 text-center">
+              <p className="text-gray-300 font-medium mb-1">没有该标签的今日学习任务</p>
+              <p className="text-sm text-gray-500">试试其它标签，或点「全部」查看今日全部任务</p>
+            </div>
+          ) : (
+            <div className={`grid gap-4 ${isTV ? "grid-cols-3" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
+              {visiblePendingTasks.map(({ task, planId, planName }) => (
+                <TaskCard
+                  key={task.video_id}
+                  task={task}
+                  planId={planId}
+                  planName={planName}
+                  isLocked={isLimitExceeded || !!(planMap.get(planId)?.is_locked_by_priority)}
+                  onMarkWatched={handleMarkWatched}
+                />
+              ))}
+              {visibleBlankPractices.map((item) => (
+                <BlankPracticeCard
+                  key={`blank-${item.plan_id}`}
+                  planId={item.plan_id}
+                  planName={item.plan_name}
+                  minutes={item.blank_practice!.minutes}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

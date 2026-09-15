@@ -4,6 +4,14 @@ export type MediaType = "video" | "audio" | "document";
 export type AudioRole = "plan" | "background";
 export type LoopMode = "shuffle" | "track" | "all";
 
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WeekdaySetting {
   episodes: number;
   blank_minutes: number;
@@ -49,6 +57,7 @@ export interface Plan {
   next_video_sort_order: number | null;
   next_video_media_type: MediaType | null;
   recent_videos: PlanPreviewVideo[];
+  tags: Tag[];
   created_at: string;
   updated_at: string;
 }

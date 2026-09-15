@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../context/AppContext";
+import { TagChip } from "./Tags";
 import type { Plan, PlanPreviewVideo, PlanStatus, VideoStatus } from "../types";
 
 const STATUS_LABEL: Record<PlanStatus, string> = {
@@ -104,6 +105,13 @@ export function PlanCard({ plan }: Props) {
           )}
           <span>{plan.watched_count}/{total} 已完成</span>
         </div>
+        {(plan.tags ?? []).length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {plan.tags.map((tag) => (
+              <TagChip key={tag.id} tag={tag} />
+            ))}
+          </div>
+        )}
         <div className="mt-3 w-full h-1 bg-gray-700 rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-all ${pct === 100 ? "bg-green-500" : "bg-sky-500"}`}
