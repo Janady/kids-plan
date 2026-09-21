@@ -6,6 +6,7 @@ import { markVideoWatchedEarlier } from "../api/videos";
 import { getVideoUrl } from "../api/videoSrc";
 import { getCachedThumbnail, cacheThumbnail } from "../api/thumbnails";
 import { useAppContext } from "../context/AppContext";
+import { useCastListRefresh } from "../hooks/useCastListRefresh";
 import { usePlatform } from "../hooks/usePlatform";
 import { CastDevicePickerModal } from "../components/CastDevicePickerModal";
 import { parseTagIdsParam, planMatchesTags, TagFilterBar, uniqueTags } from "../components/Tags";
@@ -425,6 +426,7 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+  useCastListRefresh(loadData);
 
   const handleMarkWatched = useCallback(async (videoId: number) => {
     await markVideoWatchedEarlier(videoId);
@@ -463,11 +465,12 @@ export default function HomePage() {
   const hasActivePlans = todayItems.length > 0;
   const allDoneToday = hasActivePlans && allPendingTasks.length === 0 && pendingBlankPractices.length === 0;
 
-  // Cast queue: same flattened order as allPendingTasks above (plan priority,
-  // then within-plan sort order — get_today_schedule already returns it that
-  // way), audio-only items excluded for v1.
+  // Cast queue: currently unlocked video tasks only. Locked lower-priority
+  // plans are picked up by the orchestrator after higher-priority quota is met.
   const castQueue: CastQueueItem[] = allPendingTasks
-    .filter(({ task }) => task.media_type === "video")
+    .filter(({ task, planId }) =>
+      task.media_type === "video" && !planMap.get(planId)?.is_locked_by_priority
+    )
     .map(({ task }) => ({
       video_id: task.video_id,
       file_path: task.file_path,

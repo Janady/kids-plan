@@ -1,4 +1,4 @@
-use crate::commands::plans::{effective_day_setting, today_weekday_idx};
+use crate::commands::plans::{effective_day_setting, plan_has_unmet_today_quota, today_weekday_idx};
 use crate::db::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -179,6 +179,105 @@ pub async fn get_today_schedule(
     }
 
     Ok(result)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct NextTodayVideo {
+    pub video_id: i64,
+    pub file_path: String,
+    pub title: String,
+    pub duration_seconds: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CastCandidatePlan {
+    id: i64,
+    weekly_schedule: String,
+    priority: i64,
+    is_background: i64,
+}
+
+// Next unlocked *video* still due today, after `skip_video_id` has been
+// marked watched. Re-evaluates priority locks and today's remaining quota
+// so a cast session can continue into newly unlocked lower-priority plans
+// instead of stopping when the frozen start-of-session queue runs out.
+pub(crate) async fn next_unlocked_today_video(
+    db: &sqlx::SqlitePool,
+    skip_video_id: Option<i64>,
+) -> Result<Option<NextTodayVideo>, String> {
+    let weekday_idx = today_weekday_idx();
+    let active_plans: Vec<CastCandidatePlan> = sqlx::query_as(
+        "SELECT id, weekly_schedule, priority, is_background FROM plans
+         WHERE daily_schedule_active = 1
+         ORDER BY priority DESC, created_at ASC",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut max_blocking = 0i64;
+    for plan in &active_plans {
+        if plan_has_unmet_today_quota(
+            db,
+            plan.id,
+            plan.priority,
+            1,
+            &plan.weekly_schedule,
+            plan.is_background,
+        )
+        .await?
+        {
+            max_blocking = max_blocking.max(plan.priority);
+        }
+    }
+
+    let skip = skip_video_id.unwrap_or(-1);
+    for plan in &active_plans {
+        if max_blocking > 0 && plan.priority < max_blocking {
+            continue;
+        }
+
+        let (quota, _) = effective_day_setting(&plan.weekly_schedule, weekday_idx);
+        let (done_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM videos
+             WHERE plan_id = ? AND status = 'watched'
+               AND substr(updated_at, 1, 10) = date('now', 'localtime')",
+        )
+        .bind(plan.id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if (quota - done_count).max(0) == 0 {
+            continue;
+        }
+
+        let row: Option<(i64, String, String, Option<i64>)> = sqlx::query_as(
+            "SELECT id, title, file_path, duration_seconds
+             FROM videos
+             WHERE plan_id = ? AND status IN ('watching', 'not_watched')
+               AND media_type = 'video'
+               AND id != ?
+             ORDER BY CASE status WHEN 'watching' THEN 0 ELSE 1 END, sort_order ASC
+             LIMIT 1",
+        )
+        .bind(plan.id)
+        .bind(skip)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some((video_id, title, file_path, duration_seconds)) = row {
+            return Ok(Some(NextTodayVideo {
+                video_id,
+                file_path,
+                title,
+                duration_seconds,
+            }));
+        }
+    }
+
+    Ok(None)
 }
 
 // Records a blank (offline) practice session as done for today. The date is

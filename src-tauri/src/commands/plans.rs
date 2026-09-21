@@ -632,7 +632,26 @@ pub async fn add_plan(
 // only while it's in the daily schedule and its today quota isn't met yet.
 // Plans not in the daily schedule generate no "today" tasks, so they never block.
 async fn plan_blocks_today(db: &sqlx::SqlitePool, plan: &PlanRow) -> Result<bool, String> {
-    if plan.priority == 0 || plan.daily_schedule_active == 0 {
+    plan_has_unmet_today_quota(
+        db,
+        plan.id,
+        plan.priority,
+        plan.daily_schedule_active,
+        &plan.weekly_schedule,
+        plan.is_background,
+    )
+    .await
+}
+
+pub(crate) async fn plan_has_unmet_today_quota(
+    db: &sqlx::SqlitePool,
+    plan_id: i64,
+    priority: i64,
+    daily_schedule_active: i64,
+    weekly_schedule: &str,
+    is_background: i64,
+) -> Result<bool, String> {
+    if priority == 0 || daily_schedule_active == 0 {
         return Ok(false);
     }
 
@@ -645,8 +664,8 @@ async fn plan_blocks_today(db: &sqlx::SqlitePool, plan: &PlanRow) -> Result<bool
            AND NOT (? = 1 AND media_type = 'audio')
            AND media_type != 'document'",
     )
-    .bind(plan.id)
-    .bind(plan.is_background)
+    .bind(plan_id)
+    .bind(is_background)
     .fetch_one(db)
     .await
     .map_err(|e| e.to_string())?;
@@ -661,11 +680,11 @@ async fn plan_blocks_today(db: &sqlx::SqlitePool, plan: &PlanRow) -> Result<bool
          WHERE plan_id = ? AND status = 'watched'
            AND substr(updated_at, 1, 10) = date('now', 'localtime')",
     )
-    .bind(plan.id)
+    .bind(plan_id)
     .fetch_one(db)
     .await
     .map_err(|e| e.to_string())?;
-    let (today_quota, _) = effective_day_setting(&plan.weekly_schedule, today_weekday_idx());
+    let (today_quota, _) = effective_day_setting(weekly_schedule, today_weekday_idx());
     Ok(today_done < today_quota)
 }
 

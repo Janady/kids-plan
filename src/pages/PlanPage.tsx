@@ -6,7 +6,8 @@ import {
   setPlanBackground, setPlanBgWatchedVideo, setPlanProtected, setPlanWeeklySchedule,
 } from "../api/plans";
 import { adjustVideoReps, batchAdjustPlanReps, setVideoBgTrack } from "../api/videos";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useCastListRefresh } from "../hooks/useCastListRefresh";
 import { canOpenPlanMedia } from "../components/PlanCard";
 import { TagEditor } from "../components/Tags";
 import type { Plan, Video, WeekdaySetting } from "../types";
@@ -650,16 +651,21 @@ export default function PlanPage() {
     (location.state as { scanNotice?: string } | null)?.scanNotice ?? null,
   );
 
-  const loadPlan = async () => {
+  const loadPlan = useCallback(async () => {
     const all = await listPlans();
     const found = all.find((p) => p.id === id) ?? null;
     setPlan(found);
     if (found) {
       setPriority(found.priority);
     }
-  };
+  }, [id]);
 
-  useEffect(() => { loadPlan(); }, [id]);
+  useEffect(() => { loadPlan(); }, [loadPlan]);
+
+  const refreshCastLists = useCallback(async () => {
+    await Promise.all([refresh(), loadPlan()]);
+  }, [refresh, loadPlan]);
+  useCastListRefresh(refreshCastLists);
 
   const hasVideo = videos.some((v) => v.media_type === "video");
   const hasAudio = videos.some((v) => v.media_type === "audio");

@@ -8,12 +8,14 @@ use super::avtransport::{self, TransportState};
 use super::device::RendererDevice;
 use super::lan_server;
 use super::CastState;
+use crate::commands::schedule::next_unlocked_today_video;
 use crate::commands::sessions::record_watch_tick;
 use crate::commands::videos::update_video_status;
 use crate::db::AppState;
 use crate::video_server::guess_mime;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const NEXT_ITEM_GAP: Duration = Duration::from_millis(500);
 const MAX_CONSECUTIVE_POLL_FAILURES: u32 = 3;
 const STATE_CHANGED_EVENT: &str = "cast://state-changed";
 
@@ -209,8 +211,18 @@ pub async fn run(
                         Ok(TransportState::Stopped) | Ok(TransportState::NoMediaPresent) if has_started => {
                             let app_state = app.state::<AppState>();
                             let _ = update_video_status(app_state, item.video_id, "watched".to_string()).await;
-                            index += 1;
-                            continue 'queue;
+                            // Re-query today's unlocked remaining work rather than
+                            // blindly walking the start-of-session queue: finishing a
+                            // high-priority plan's quota unlocks lower-priority plans
+                            // that were not playable (and often not even queued) yet.
+                            match advance_queue(&app, &mut queue, item.video_id).await {
+                                Some(pos) => {
+                                    tokio::time::sleep(NEXT_ITEM_GAP).await;
+                                    index = pos;
+                                    continue 'queue;
+                                }
+                                None => break 'queue,
+                            }
                         }
                         Ok(state) => {
                             consecutive_failures = 0;
@@ -263,6 +275,30 @@ pub async fn run(
         },
     );
     clear_session(&app).await;
+}
+
+async fn advance_queue(
+    app: &AppHandle,
+    queue: &mut Vec<CastQueueItem>,
+    just_finished: i64,
+) -> Option<usize> {
+    let app_state = app.state::<AppState>();
+    let next = next_unlocked_today_video(&app_state.db, Some(just_finished))
+        .await
+        .ok()
+        .flatten()?;
+    let item = CastQueueItem {
+        video_id: next.video_id,
+        file_path: next.file_path,
+        title: next.title,
+        duration_seconds: next.duration_seconds,
+    };
+    if let Some(pos) = queue.iter().position(|q| q.video_id == item.video_id) {
+        Some(pos)
+    } else {
+        queue.push(item);
+        Some(queue.len() - 1)
+    }
 }
 
 fn error_snapshot(renderer_name: &str, queue: Vec<CastQueueItem>, error: String) -> CastStateSnapshot {

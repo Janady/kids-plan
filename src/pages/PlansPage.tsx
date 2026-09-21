@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { addPlan, listPlans } from "../api/plans";
 import { getSetting } from "../api/settings";
 import { useAppContext } from "../context/AppContext";
+import { useCastListRefresh } from "../hooks/useCastListRefresh";
 import { usePlatform } from "../hooks/usePlatform";
 import { FolderPickerModal } from "../components/FolderPickerModal";
 import { PlanCard } from "../components/PlanCard";
@@ -30,16 +31,18 @@ export default function PlansPage() {
     getSetting("scan_root_dir").then((v) => { if (v) setScanRoot(v); });
   }, []);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       setPlans(await listPlans());
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+  const refreshCastLists = useCallback(() => loadData({ silent: true }), [loadData]);
+  useCastListRefresh(refreshCastLists);
 
   const filterTags = uniqueTags(plans);
   const filteredPlans = selectedTagIds.length === 0
