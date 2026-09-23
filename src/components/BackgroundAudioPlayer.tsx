@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { addPluginListener } from "@tauri-apps/api/core";
 import { useAppContext } from "../context/AppContext";
 import { getVideoUrl } from "../api/videoSrc";
 import { recordBackgroundPlay } from "../api/sessions";
 import { setBackgroundPlayback } from "../api/backgroundPlayback";
+import { IS_ANDROID } from "../hooks/usePlatform";
 import { LoopIcon } from "./LoopIcon";
 import { PlayIcon, PauseIcon, PrevIcon, NextIcon } from "./MediaIcons";
 import type { LoopMode } from "../types";
@@ -29,7 +31,10 @@ export function BackgroundAudioPlayer() {
   const currentTrack = currentPlan?.tracks[bgCurrentTrackIdx] ?? null;
   const trackKey = currentTrack ? `${currentTrack.id}` : "";
 
-  // Load new src and record play when track changes
+  // Load new src and record play when track changes.
+  // On Android the foreground MediaPlayer service is the actual audio source —
+  // WebView <audio> is paused by Chromium on many tablets as soon as the
+  // screen turns off, so we must not rely on it there.
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
@@ -39,16 +44,17 @@ export function BackgroundAudioPlayer() {
     }
     if (trackKey !== prevTrackKey.current) {
       prevTrackKey.current = trackKey;
-      el.src = getVideoUrl(currentTrack.file_path);
-      if (bgIsPlaying) {
-        el.play().catch(() => {});
-        recordBackgroundPlay(currentTrack.id).catch(() => {});
+      if (!IS_ANDROID) {
+        el.src = getVideoUrl(currentTrack.file_path);
+        if (bgIsPlaying) el.play().catch(() => {});
       }
+      if (bgIsPlaying) recordBackgroundPlay(currentTrack.id).catch(() => {});
     }
   }, [trackKey, currentTrack, bgIsPlaying]);
 
-  // Sync play/pause state
+  // Sync play/pause state (desktop / non-Android HTML audio)
   useEffect(() => {
+    if (IS_ANDROID) return;
     const el = audioRef.current;
     if (!el || !currentTrack) return;
     if (bgIsPlaying && el.paused && el.src) {
@@ -58,23 +64,78 @@ export function BackgroundAudioPlayer() {
     }
   }, [bgIsPlaying, currentTrack]);
 
-  // Keep a native Android foreground service running while music is playing so
-  // locking the screen doesn't freeze the WebView / audio server.
+  // Native Android player: file path, not the WebView HTTP URL.
   useEffect(() => {
     if (bgIsPlaying && currentTrack) {
-      setBackgroundPlayback(true, currentTrack.title).catch(() => {});
+      setBackgroundPlayback(true, currentTrack.title, currentTrack.file_path, bgLoopMode === "track").catch(() => {});
     } else {
       setBackgroundPlayback(false).catch(() => {});
     }
-  }, [bgIsPlaying, currentTrack]);
+  }, [bgIsPlaying, currentTrack, bgLoopMode]);
 
   useEffect(() => {
     return () => { setBackgroundPlayback(false).catch(() => {}); };
   }, []);
 
+  // Native service events (track ended, lock-screen next/prev/pause).
+  // evaluateJavascript fallback covers tablets that freeze plugin IPC
+  // while the screen is off but still run a resumed WebView.
+  const bgOnEndedRef = useRef(bgOnEnded);
+  bgOnEndedRef.current = bgOnEnded;
+  const bgTogglePlayRef = useRef(bgTogglePlay);
+  bgTogglePlayRef.current = bgTogglePlay;
+  const bgNextRef = useRef(bgNext);
+  bgNextRef.current = bgNext;
+  const bgPrevRef = useRef(bgPrev);
+  bgPrevRef.current = bgPrev;
+  const lastNativeEndedRef = useRef(0);
+  const lastNativeNavRef = useRef(0);
+  const bgIsPlayingRef = useRef(bgIsPlaying);
+  bgIsPlayingRef.current = bgIsPlaying;
+
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const handle = (event: string) => {
+      if (event === "ended") {
+        const now = Date.now();
+        if (now - lastNativeEndedRef.current < 800) return;
+        lastNativeEndedRef.current = now;
+        bgOnEndedRef.current();
+        return;
+      }
+      if (event === "next" || event === "prev") {
+        const now = Date.now();
+        if (now - lastNativeNavRef.current < 800) return;
+        lastNativeNavRef.current = now;
+        if (event === "next") bgNextRef.current();
+        else bgPrevRef.current();
+        return;
+      }
+      if (event === "pause") {
+        if (bgIsPlayingRef.current) bgTogglePlayRef.current();
+      } else if (event === "play") {
+        if (!bgIsPlayingRef.current) bgTogglePlayRef.current();
+      }
+    };
+    (window as unknown as { __bgNativeEvent?: (event: string) => void }).__bgNativeEvent = handle;
+    let cancelled = false;
+    const listeners: { unregister: () => Promise<void> }[] = [];
+    for (const event of ["ended", "next", "prev", "pause", "play"]) {
+      addPluginListener("background-playback", event, () => handle(event))
+        .then((l) => { if (cancelled) void l.unregister(); else listeners.push(l); })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+      listeners.forEach((l) => { void l.unregister(); });
+      delete (window as unknown as { __bgNativeEvent?: unknown }).__bgNativeEvent;
+    };
+  }, []);
+
   // Lock-screen / headset media controls, and a hint to Chromium that this
   // audio should continue while the document is hidden.
   useEffect(() => {
+    if (IS_ANDROID) return;
     if (!("mediaSession" in navigator)) return;
     if (!currentTrack) {
       navigator.mediaSession.metadata = null;
@@ -101,9 +162,8 @@ export function BackgroundAudioPlayer() {
 
   // If Chromium auto-pauses the element when the screen turns off, kick it
   // back to playing as long as the user hasn't paused.
-  const bgIsPlayingRef = useRef(bgIsPlaying);
-  bgIsPlayingRef.current = bgIsPlaying;
   useEffect(() => {
+    if (IS_ANDROID) return;
     const el = audioRef.current;
     if (!el) return;
     const resumeIfNeeded = () => {

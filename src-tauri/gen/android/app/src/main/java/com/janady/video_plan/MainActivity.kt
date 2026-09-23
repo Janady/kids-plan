@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.webkit.WebView
 import androidx.core.app.ActivityCompat
@@ -17,10 +19,25 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : TauriActivity() {
+  companion object {
+    @Volatile
+    private var instance: MainActivity? = null
+
+    fun dispatchBgEvent(event: String) {
+      val activity = instance ?: return
+      val js = "window.__bgNativeEvent && window.__bgNativeEvent('$event')"
+      activity.runOnUiThread {
+        activity.webView?.evaluateJavascript(js, null)
+      }
+    }
+  }
+
   private var webView: WebView? = null
+  private val keepAliveHandler = Handler(Looper.getMainLooper())
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    instance = this
 
     // Match app's dark bg-gray-900 (#111827) so status bar blends in
     window.statusBarColor = Color.parseColor("#111827")
@@ -48,19 +65,49 @@ class MainActivity : TauriActivity() {
     webView.postDelayed({ ViewCompat.requestApplyInsets(webView) }, 1600)
   }
 
-  // WryActivity.onPause() calls WebView.onPause(), which stops HTML media.
-  // Resume immediately while background music is playing so locking the screen
-  // doesn't cut the audio.
+  // WryActivity.onPause() calls WebView.onPause(), which stops HTML timers
+  // and media. Keep the WebView resumed while native background playback is
+  // running so JS can still receive track-ended / next / prev events.
   override fun onPause() {
     super.onPause()
-    if (BgPlaybackService.isRunning) {
-      webView?.onResume()
-    }
+    keepWebViewAlive()
+  }
+
+  override fun onStop() {
+    super.onStop()
+    keepWebViewAlive()
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (!hasFocus) keepWebViewAlive()
+  }
+
+  override fun onDestroy() {
+    if (instance === this) instance = null
+    keepAliveHandler.removeCallbacksAndMessages(null)
+    super.onDestroy()
   }
 
   override fun onResume() {
     super.onResume()
+    keepAliveHandler.removeCallbacksAndMessages(null)
     webView?.let { ViewCompat.requestApplyInsets(it) }
+  }
+
+  private fun keepWebViewAlive() {
+    if (!BgPlaybackService.isRunning) return
+    resumeWebView()
+    // Chromium often pauses media/JS a beat after onPause on tablets.
+    listOf(150L, 600L, 2000L, 5000L).forEach { delay ->
+      keepAliveHandler.postDelayed({ resumeWebView() }, delay)
+    }
+  }
+
+  private fun resumeWebView() {
+    if (!BgPlaybackService.isRunning) return
+    webView?.onResume()
+    webView?.resumeTimers()
   }
 
   // targetSdk 35+ draws edge-to-edge, so HTML `top:0` sits under the status bar.
@@ -90,6 +137,10 @@ class MainActivity : TauriActivity() {
       if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO)
           != PackageManager.PERMISSION_GRANTED) {
         permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+      }
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+          != PackageManager.PERMISSION_GRANTED) {
+        permissions.add(Manifest.permission.POST_NOTIFICATIONS)
       }
     } else {
       if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
