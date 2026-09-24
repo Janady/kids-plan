@@ -1,0 +1,29 @@
+:root {
+  --bg: #fff4e5;
+  --card: #ffffff;
+  --ink: #3a2a1f;
+  --muted: #8a7464;
+  --line: rgba(58, 42, 31, 0.1);
+  --accent: #ff7a3d;
+  --sun: #f5b942;
+  --sky: #4ba3e3;
+  --leaf: #3dbf7a;
+  --grape: #9b7ed9;
+  --berry: #e85d75;
+  --chip: #ffe8cc;
+  --good-bg: #e6f7ee;
+  --bad-bg: #fde8ec;
+  --sun-bg: #fff3d1;
+  --sky-bg: #e4f3fc;
+  --grape-bg: #f0e9fb;
+  --shadow: 0 10px 40px rgba(90, 50, 20, 0.08);
+  --radius: 16px;
+  --tab-h: 56px;
+  --rail-w: 76px;
+  --safe-t: var(--android-sat, env(safe-area-inset-top, 0px));
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --font: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --player-bg: #1c1814;
+}

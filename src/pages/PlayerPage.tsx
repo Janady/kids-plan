@@ -351,13 +351,15 @@ export default function PlayerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (loading) return <div className="text-center text-gray-500 py-16">加载中…</div>;
+  if (loading) return <div className="study"><div className="empty">加载中…</div></div>;
 
   if (!video) {
     return (
-      <div className="text-center text-gray-500 py-16">
-        <p>媒体文件未找到</p>
-        <button onClick={() => navigate(-1)} className="mt-4 text-sky-400 text-sm">返回</button>
+      <div className="study">
+        <div className="empty">
+          <p>媒体文件未找到</p>
+          <button onClick={() => navigate(-1)} className="primary mt-4">返回</button>
+        </div>
       </div>
     );
   }
@@ -365,11 +367,11 @@ export default function PlayerPage() {
   // Video limit only blocks video content — audio is always accessible
   if (isLimitExceeded && !isAudio) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center">
+      <div className="study flex flex-col items-center justify-center text-center">
         <div className="text-5xl mb-4">🔒</div>
-        <h2 className="text-xl font-semibold text-red-400 mb-2">今日学习时长已达上限</h2>
-        <p className="text-gray-400 text-sm mb-6">明天再来继续学习吧！</p>
-        <button onClick={() => navigate("/")} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors">
+        <h2 className="text-xl font-semibold mb-2" style={{ color: "#f0a0a8" }}>今日学习时长已达上限</h2>
+        <p className="text-sm mb-6 opacity-70">明天再来继续学习吧！</p>
+        <button onClick={() => navigate("/")} className="primary">
           返回首页
         </button>
       </div>
@@ -379,31 +381,29 @@ export default function PlayerPage() {
   const src = getVideoUrl(video.file_path);
 
   return (
-    <div>
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 mb-3 text-sm text-gray-500">
-        <button onClick={() => navigate("/")} className="hover:text-gray-300 transition-colors">首页</button>
+    <div className="study">
+      <div className="flex items-center gap-2 mb-3 text-sm opacity-70">
+        <button onClick={() => navigate("/")}>首页</button>
         <span>/</span>
-        <button onClick={() => navigate(`/plan/${pId}`)} className="hover:text-gray-300 transition-colors truncate max-w-[160px]">
+        <button onClick={() => navigate(`/plan/${pId}`)} className="truncate max-w-[160px]">
           {plan?.name ?? "计划"}
         </button>
       </div>
 
-      <h1 className="text-lg font-semibold text-gray-100 mb-3 leading-tight">
-        {isAudio && <span className="text-purple-400 mr-2">🎵</span>}
+      <h1 className="text-lg font-semibold mb-3 leading-tight">
+        {isAudio && <span className="mr-2" style={{ color: "#c4a6f0" }}>🎵</span>}
         {video.title}
       </h1>
 
       {isAudio ? (
-        /* ── Audio player ── */
-        <div className="relative bg-gray-900 rounded-xl overflow-hidden w-full">
+        <div className="relative rounded-xl overflow-hidden w-full" style={{ background: "#2a221c" }}>
           {/* Album art placeholder */}
           <div className="flex flex-col items-center justify-center py-16 px-6">
-            <div className="w-32 h-32 rounded-full bg-purple-900/40 border-2 border-purple-700/40 flex items-center justify-center mb-6">
+            <div className="w-32 h-32 rounded-full flex items-center justify-center mb-6" style={{ background: "rgba(155,126,217,0.25)", border: "2px solid rgba(155,126,217,0.4)" }}>
               <span className="text-6xl">🎵</span>
             </div>
-            <p className="text-gray-300 text-base font-medium text-center mb-1">{video.title}</p>
-            <p className="text-gray-500 text-sm text-center">{plan?.name}</p>
+            <p className="text-base font-medium text-center mb-1">{video.title}</p>
+            <p className="text-sm text-center opacity-60">{plan?.name}</p>
 
             {resumedFrom !== null && (
               <div className="mt-4 bg-black/50 text-yellow-300 text-sm px-4 py-2 rounded-full">
@@ -433,8 +433,8 @@ export default function PlayerPage() {
           {ended && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 rounded-xl">
               <div className="text-5xl mb-3">✅</div>
-              <div className="text-xl font-semibold text-green-400 mb-1">本曲已完成</div>
-              <div className="text-sm text-gray-400">正在返回首页…</div>
+              <div className="text-xl font-semibold mb-1" style={{ color: "#7ed9a8" }}>本曲已完成</div>
+              <div className="text-sm opacity-70">正在返回首页…</div>
             </div>
           )}
         </div>
@@ -445,7 +445,7 @@ export default function PlayerPage() {
         <div className="mt-3">
           <button
             onClick={finishVideo}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+            className="primary"
             title="已听完主要内容，直接标记完成"
           >
             ✓ 完成本集
@@ -523,8 +523,8 @@ export default function PlayerPage() {
           {ended && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85">
               <div className="text-5xl mb-3">✅</div>
-              <div className="text-xl font-semibold text-green-400 mb-1">本集已完成</div>
-              <div className="text-sm text-gray-400">正在返回首页…</div>
+              <div className="text-xl font-semibold mb-1" style={{ color: "#7ed9a8" }}>本集已完成</div>
+              <div className="text-sm opacity-70">正在返回首页…</div>
             </div>
           )}
         </div>
@@ -535,7 +535,7 @@ export default function PlayerPage() {
         <div className="mt-3 flex items-center gap-2">
           <button
             onClick={() => setIsFullscreen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm transition-colors"
+            className="text-btn"
           >
             <FullscreenIcon size={16} /> 全屏
           </button>
@@ -543,7 +543,7 @@ export default function PlayerPage() {
           {canFinishEarly && !ended && !isParentMode && (
             <button
               onClick={finishVideo}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+              className="primary"
               title="已看完主要内容，直接标记完成"
             >
               ✓ 完成本集
@@ -554,7 +554,7 @@ export default function PlayerPage() {
 
       <button
         onClick={() => navigate(`/plan/${pId}`)}
-        className="mt-3 text-sm text-gray-500 hover:text-gray-300 transition-colors"
+        className="mt-3 text-sm opacity-70"
       >
         ← 返回计划目录
       </button>

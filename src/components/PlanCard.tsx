@@ -9,19 +9,7 @@ const STATUS_LABEL: Record<PlanStatus, string> = {
   completed: "已完成",
 };
 
-const STATUS_COLOR: Record<PlanStatus, string> = {
-  not_started: "bg-gray-700 text-gray-300",
-  in_progress: "bg-sky-700 text-sky-200",
-  completed: "bg-green-800 text-green-200",
-};
-
 const PRIORITY_LABELS = ["无", "低", "中", "高"];
-const PRIORITY_BADGE = [
-  "",
-  "bg-blue-900/50 text-blue-300",
-  "bg-yellow-900/50 text-yellow-300",
-  "bg-red-900/50 text-red-300",
-];
 
 function formatTime(s: number): string {
   const h = Math.floor(s / 3600);
@@ -31,8 +19,6 @@ function formatTime(s: number): string {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-// JS Date.getDay() is 0=Sunday..6=Saturday; convert to 0=Monday..6=Sunday to
-// match the backend's weekly_schedule index (chrono's num_days_from_monday()).
 function todayEpisodeQuota(plan: Plan): number {
   const idx = (new Date().getDay() + 6) % 7;
   return plan.weekly_schedule[idx]?.episodes ?? plan.episodes_per_day;
@@ -42,17 +28,15 @@ export function canOpenPlanMedia(isParentMode: boolean, status: VideoStatus): bo
   return isParentMode || status === "watched";
 }
 
-interface Props {
-  plan: Plan;
-}
-
-export function PlanCard({ plan }: Props) {
+export function PlanCard({ plan }: { plan: Plan }) {
   const navigate = useNavigate();
   const { isParentMode, isCastActive, castSnapshot, switchCastVideo } = useAppContext();
   const total = plan.video_count + plan.audio_count;
   const pct = total > 0 ? Math.round((plan.watched_count / total) * 100) : 0;
   const recentVideos = plan.recent_videos ?? [];
   const extraCount = Math.max(0, total - recentVideos.length);
+  const mark = plan.audio_count > 0 && plan.video_count === 0 ? "音" : plan.document_count > 0 && total === 0 ? "文" : "视";
+  const icoClass = mark === "音" ? "audio" : mark === "文" ? "doc" : "video";
 
   const goDetail = () => navigate(`/plan/${plan.id}`);
 
@@ -71,58 +55,41 @@ export function PlanCard({ plan }: Props) {
   };
 
   return (
-    <div className="bg-gray-800 border border-gray-700 hover:border-sky-600 rounded-xl overflow-hidden transition-all">
-      <button
-        type="button"
-        onClick={goDetail}
-        className="w-full text-left px-5 pt-5 pb-3 hover:bg-gray-750/40 transition-colors"
-      >
-        <div className="flex items-start justify-between gap-3 mb-1">
-          <h3 className="font-semibold text-gray-100 leading-tight line-clamp-2">
-            {plan.name}
-          </h3>
-          <span
-            className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOR[plan.status as PlanStatus]}`}
-          >
+    <div className="card overflow-hidden">
+      <button type="button" onClick={goDetail} className="acc">
+        <span className={`kind-ico ${icoClass}`}>{mark}</span>
+        <span className="acc-main">
+          <b>{plan.name}</b>
+          <small>
             {STATUS_LABEL[plan.status as PlanStatus]}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
-          {plan.video_count > 0 && <span>🎬 {plan.video_count}</span>}
-          {plan.audio_count > 0 && <span>🎵 {plan.audio_count}</span>}
-          {plan.document_count > 0 && <span>📄 {plan.document_count}</span>}
-          {(plan.is_background === 1 || plan.bg_watched_video === 1) && <span className="text-purple-400">🎶</span>}
-          {plan.is_protected === 1 && <span className="text-amber-400">🔒</span>}
-          {plan.priority > 0 && (
-            <span className={`px-1.5 py-0.5 rounded ${PRIORITY_BADGE[plan.priority]}`}>
-              优先级·{PRIORITY_LABELS[plan.priority]}
-            </span>
-          )}
-          {!!plan.daily_schedule_active && (
-            <span className="bg-sky-800/60 text-sky-300 px-1.5 py-0.5 rounded">
-              今日{todayEpisodeQuota(plan)}集
-            </span>
-          )}
-          <span>{plan.watched_count}/{total} 已完成</span>
-        </div>
+            {plan.video_count > 0 ? ` · ${plan.video_count} 视频` : ""}
+            {plan.audio_count > 0 ? ` · ${plan.audio_count} 音频` : ""}
+            {plan.document_count > 0 ? ` · ${plan.document_count} 文档` : ""}
+            {plan.priority > 0 ? ` · 优先级${PRIORITY_LABELS[plan.priority]}` : ""}
+            {!!plan.daily_schedule_active ? ` · 今日${todayEpisodeQuota(plan)}集` : ""}
+          </small>
+        </span>
+        <span className={`chip ${plan.status === "completed" ? "leaf" : plan.status === "in_progress" ? "video" : "muted"}`}>
+          {plan.watched_count}/{total}
+        </span>
+      </button>
+
+      <div className="px-4 pb-3">
         {(plan.tags ?? []).length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-2">
+          <div className="flex flex-wrap gap-1 mb-2">
             {plan.tags.map((tag) => (
               <TagChip key={tag.id} tag={tag} />
             ))}
           </div>
         )}
-        <div className="mt-3 w-full h-1 bg-gray-700 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${pct === 100 ? "bg-green-500" : "bg-sky-500"}`}
-            style={{ width: `${pct}%` }}
-          />
+        <div className={`progress ${pct === 100 ? "leaf" : "sky"}`}>
+          <span style={{ width: `${pct}%` }} />
         </div>
-      </button>
+      </div>
 
-      <div className="px-3 pb-3 flex flex-col gap-1.5">
+      <div className="px-3 pb-3 flex flex-col gap-1">
         {recentVideos.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-gray-500">暂无媒体文件</div>
+          <div className="px-3 py-2 text-xs text-mute">暂无媒体文件</div>
         ) : (
           recentVideos.map((item) => {
             const canOpen = canOpenPlanMedia(isParentMode, item.status);
@@ -146,37 +113,24 @@ export function PlanCard({ plan }: Props) {
                     openVideo(item);
                   }
                 }}
-                className={`rounded-lg px-3 py-2.5 border transition-all ${
-                  canOpen
-                    ? isWatching
-                      ? "border-yellow-700/50 bg-gray-900/40 hover:border-yellow-500 cursor-pointer"
-                      : "border-gray-700/60 bg-gray-900/40 hover:border-sky-600 cursor-pointer"
-                    : "border-gray-800 bg-gray-900/20 opacity-50 cursor-not-allowed"
-                }`}
+                className={`rounded-xl px-3 py-2.5 ${canOpen ? "bg-chip" : "opacity-50"}`}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-xs shrink-0">{isAudio ? "🎵" : "🎬"}</span>
-                  <span className="text-[10px] text-gray-600 shrink-0">{item.sort_order + 1}</span>
-                  <span className="flex-1 min-w-0 text-sm text-gray-200 truncate">{item.title}</span>
-                  {isCastingThis && (
-                    <span className="text-[10px] bg-sky-500/90 text-white font-semibold px-1.5 py-0.5 rounded shrink-0">
-                      📺
-                    </span>
-                  )}
-                  {!canOpen && <span className="text-xs shrink-0">🔒</span>}
-                  {item.status === "watched" && (
-                    <span className="text-[10px] text-green-500 shrink-0">已学</span>
-                  )}
+                  <span className={`chip ${isAudio ? "audio" : "video"}`}>{isAudio ? "音频" : "视频"}</span>
+                  <span className="flex-1 min-w-0 text-sm text-ink truncate">{item.title}</span>
+                  {isCastingThis && <span className="chip video">投屏</span>}
+                  {!canOpen && <span>🔒</span>}
+                  {item.status === "watched" && <span className="chip leaf">已学</span>}
                   {item.duration_seconds != null && (
-                    <span className="text-[10px] text-gray-600 shrink-0">{formatTime(item.duration_seconds)}</span>
+                    <span className="text-[11px] text-mute shrink-0">{formatTime(item.duration_seconds)}</span>
                   )}
                 </div>
                 {isWatching && progressPct > 0 && (
-                  <div className="mt-1.5 ml-6">
-                    <div className="w-full h-0.5 bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-yellow-400" style={{ width: `${progressPct}%` }} />
+                  <div className="mt-1.5">
+                    <div className="progress sun">
+                      <span style={{ width: `${progressPct}%` }} />
                     </div>
-                    <span className="text-[10px] text-yellow-400">
+                    <span className="text-[11px] text-sun">
                       {isAudio ? "已听至" : "已看至"} {formatTime(item.progress_seconds)}
                       {item.duration_seconds ? ` / ${formatTime(item.duration_seconds)}` : ""}
                     </span>
@@ -188,12 +142,8 @@ export function PlanCard({ plan }: Props) {
         )}
 
         {extraCount > 0 && (
-          <button
-            type="button"
-            onClick={goDetail}
-            className="mt-0.5 px-3 py-1.5 text-xs text-sky-400 hover:text-sky-300 text-left transition-colors"
-          >
-            还有 {extraCount} 个，查看全部 →
+          <button type="button" onClick={goDetail} className="ghost-btn text-left">
+            还有 {extraCount} 个，查看全部
           </button>
         )}
       </div>

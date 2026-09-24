@@ -1,12 +1,11 @@
-import { Routes, Route, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Navigate, Routes, Route, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { NavBar } from "./components/NavBar";
 import { DailyLimitBanner } from "./components/DailyLimitBanner";
 import { BreakOverlay } from "./components/BreakOverlay";
 import { BackgroundAudioPlayer } from "./components/BackgroundAudioPlayer";
-import { BgFullscreenPlayer } from "./components/BgFullscreenPlayer";
 import { CastStatusBar } from "./components/CastStatusBar";
+import { BottomNav } from "./components/BottomNav";
 import HomePage from "./pages/HomePage";
 import PlansPage from "./pages/PlansPage";
 import PlanPage from "./pages/PlanPage";
@@ -17,8 +16,10 @@ import StatsPage from "./pages/StatsPage";
 import BackgroundAudioPage from "./pages/BackgroundAudioPage";
 import CleanupPage from "./pages/CleanupPage";
 import BlankPracticePage from "./pages/BlankPracticePage";
+import MePage from "./pages/MePage";
 import { usePlatform } from "./hooks/usePlatform";
 import { useAppContext } from "./context/AppContext";
+import { setPing } from "./ui/toast";
 
 function StoragePermissionBanner() {
   const { isAndroid } = usePlatform();
@@ -34,51 +35,73 @@ function StoragePermissionBanner() {
   if (!needsPermission) return null;
 
   return (
-    <div className="bg-amber-900/80 border-b border-amber-700 px-4 py-3 text-sm text-amber-200 text-center">
-      需要"所有文件访问权限"才能扫描视频文件夹。
-      请前往 <strong>设置 › 应用 › 特殊应用访问权限 › 所有文件访问权限</strong> 开启。
+    <div className="banner perm">
+      需要「所有文件访问权限」才能扫描视频文件夹。请前往 设置 › 应用 › 特殊应用访问权限 › 所有文件访问权限 开启。
     </div>
   );
 }
 
+function isOverlayPath(pathname: string) {
+  return (
+    /^\/plan\/[^/]+\/video\//.test(pathname) ||
+    /^\/plan\/[^/]+\/document\//.test(pathname) ||
+    /^\/plan\/[^/]+\/blank-practice/.test(pathname)
+  );
+}
+
 export default function App() {
-  const { isTV } = usePlatform();
-  const { bgAudioPlans, isBreakRequired, isBedtime } = useAppContext();
+  const { isTV, isRail } = usePlatform();
+  const { isBreakRequired, isBedtime, isParentMode } = useAppContext();
   const location = useLocation();
-  // On the video player page we don't show the background-audio bar (the video
-  // has its own audio); PlayerPage stops any background playback on entry.
-  // Exception: if a break/bedtime overlay is showing (can happen while still on
-  // the player route), background music should still play — BackgroundAudioPlayer
-  // owns the only <audio> element that actually produces sound, so it must stay
-  // mounted whenever the overlay's music controls are visible.
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef(0);
+
+  useEffect(() => {
+    setPing((text) => {
+      setToast(text);
+      window.clearTimeout(toastTimer.current);
+      toastTimer.current = window.setTimeout(() => setToast(""), 1600);
+    });
+    return () => setPing(null);
+  }, []);
+
   const onPlayerPage = /^\/plan\/[^/]+\/video\//.test(location.pathname);
   const overlayActive = isBreakRequired || isBedtime;
-  const showBgPlayer = !onPlayerPage || overlayActive;
-  const hasBgAudio = bgAudioPlans.length > 0 && showBgPlayer;
+  const showBgEngine = !onPlayerPage || overlayActive;
+  const hideChrome = isOverlayPath(location.pathname);
 
   return (
-    <div className={`min-h-screen bg-gray-950 text-gray-100 flex flex-col${isTV ? " px-[5vw] py-[3vh]" : ""}`}>
-      <NavBar />
-      <StoragePermissionBanner />
-      <DailyLimitBanner />
-      <CastStatusBar />
-      <main className={`flex-1 container mx-auto px-4 py-4 max-w-6xl${isTV ? " pb-20" : hasBgAudio ? " pb-16" : ""}`}>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/plans" element={<PlansPage />} />
-          <Route path="/plan/:planId" element={<PlanPage />} />
-          <Route path="/plan/:planId/video/:videoId" element={<PlayerPage />} />
-          <Route path="/plan/:planId/document/:videoId" element={<DocumentViewerPage />} />
-          <Route path="/plan/:planId/blank-practice" element={<BlankPracticePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/stats" element={<StatsPage />} />
-          <Route path="/background-audio" element={<BackgroundAudioPage />} />
-          <Route path="/cleanup" element={<CleanupPage />} />
-        </Routes>
-      </main>
+    <div className={`app${isTV ? " is-tv" : ""}${isRail ? " is-rail" : ""}`}>
+      {!hideChrome && (
+        <div className="safe-top">
+          <StoragePermissionBanner />
+          {isParentMode && <div className="banner parent">家长模式 · 播放不记录学习进度</div>}
+          <DailyLimitBanner />
+          <CastStatusBar />
+        </div>
+      )}
+      <div className={hideChrome ? "workspace workspace-full" : "workspace"}>
+        {!hideChrome && <BottomNav />}
+        <main className={hideChrome ? "stage-full" : "stage"}>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/plans" element={<PlansPage />} />
+            <Route path="/plan/:planId" element={<PlanPage />} />
+            <Route path="/plan/:planId/video/:videoId" element={<PlayerPage />} />
+            <Route path="/plan/:planId/document/:videoId" element={<DocumentViewerPage />} />
+            <Route path="/plan/:planId/blank-practice" element={<BlankPracticePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/stats" element={<StatsPage />} />
+            <Route path="/listen" element={<BackgroundAudioPage />} />
+            <Route path="/background-audio" element={<Navigate to="/listen" replace />} />
+            <Route path="/cleanup" element={<CleanupPage />} />
+            <Route path="/me" element={<MePage />} />
+          </Routes>
+        </main>
+      </div>
       <BreakOverlay />
-      {showBgPlayer && <BackgroundAudioPlayer />}
-      <BgFullscreenPlayer />
+      {showBgEngine && <BackgroundAudioPlayer />}
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

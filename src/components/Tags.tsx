@@ -5,8 +5,7 @@ import {
 import type { Plan, Tag } from "../types";
 
 export const TAG_COLORS = [
-  "#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#fb923c", "#e879f9",
-  "#22d3ee",
+  "#4BA3E3", "#9B7ED9", "#3DBF7A", "#F5B942", "#E85D75", "#FF7A3D", "#5EC8D8", "#F48FB1",
 ];
 
 export function uniqueTags(plans: Plan[]): Tag[] {
@@ -112,15 +111,11 @@ export function TagFilterBar({
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap mb-4">
-      <span className="text-xs text-gray-500 shrink-0">标签</span>
+      <span className="text-xs text-mute shrink-0">标签</span>
       <button
         type="button"
         onClick={() => onChange([])}
-        className={`px-2 py-0.5 rounded-full text-[11px] border transition-all ${
-          selectedIds.length === 0
-            ? "bg-sky-900/40 text-sky-300 border-sky-700"
-            : "bg-gray-800 text-gray-500 border-gray-700 hover:border-gray-500"
-        }`}
+        className={`chip ${selectedIds.length === 0 ? "video" : "muted"}`}
       >
         全部
       </button>
@@ -245,7 +240,7 @@ export function TagEditor({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="px-2 py-0.5 rounded-full text-[11px] border border-dashed border-gray-600 text-gray-400 hover:border-sky-600 hover:text-sky-300 transition-colors"
+            className="chip muted"
           >
             {expanded ? "收起" : boundTags.length > 0 ? "管理标签" : "+ 添加标签"}
           </button>
@@ -253,40 +248,40 @@ export function TagEditor({
       </div>
 
       {editable && expanded && (
-        <div className="mt-2 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg space-y-3">
-          {error && <p className="text-xs text-red-400">{error}</p>}
+        <div className="mt-2 px-4 py-3 rounded-xl bg-chip space-y-3">
+          {error && <p className="text-xs text-berry">{error}</p>}
 
           <div className="space-y-1.5">
-            <div className="text-[10px] text-gray-500">点击标签绑定到此计划，可编辑或删除全局标签</div>
+            <div className="text-[10px] text-mute">点击标签绑定到此计划，可编辑或删除全局标签</div>
             {allTags.length === 0 && (
-              <p className="text-xs text-gray-500">还没有标签，先在下方新建</p>
+              <p className="text-xs text-mute">还没有标签，先在下方新建</p>
             )}
             {allTags.map((tag) => {
               const bound = boundIds.has(tag.id);
               if (editingId === tag.id) {
                 return (
-                  <div key={tag.id} className="flex items-center gap-2 flex-wrap px-2 py-1.5 bg-gray-900/60 rounded-lg">
+                  <div key={tag.id} className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded-lg bg-paper">
                     <input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleSaveEdit(); }}
                       maxLength={20}
                       autoFocus
-                      className="flex-1 min-w-[6rem] bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-sky-500"
+                      className="flex-1 min-w-[6rem] field-input h-8 text-xs"
                     />
                     <ColorDots value={editColor} onChange={setEditColor} />
                     <button
                       type="button"
                       onClick={handleSaveEdit}
                       disabled={busy}
-                      className="text-[10px] px-2 py-1 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded"
+                      className="chip video"
                     >
                       保存
                     </button>
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
-                      className="text-[10px] px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
+                      className="chip muted"
                     >
                       取消
                     </button>
@@ -299,18 +294,16 @@ export function TagEditor({
                     type="button"
                     disabled={busy}
                     onClick={() => run(() => bound ? unbindPlanTag(planId, tag.id) : bindPlanTag(planId, tag.id))}
-                    className={`flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg border text-left transition-all ${
-                      bound
-                        ? "bg-gray-700/60 border-gray-500"
-                        : "bg-gray-900/30 border-gray-800 hover:border-gray-600"
+                    className={`flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left ${
+                      bound ? "bg-paper" : "opacity-70"
                     }`}
                   >
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
                       style={{ backgroundColor: tag.color }}
                     />
-                    <span className="text-xs text-gray-200 truncate">{tag.name}</span>
-                    {bound && <span className="ml-auto text-[10px] text-sky-400 shrink-0">已绑定</span>}
+                    <span className="text-xs text-ink truncate">{tag.name}</span>
+                    {bound && <span className="ml-auto text-[10px] text-video shrink-0">已绑定</span>}
                   </button>
                   <button
                     type="button"
@@ -320,7 +313,7 @@ export function TagEditor({
                       setEditColor(tag.color);
                       setError(null);
                     }}
-                    className="text-[10px] px-1.5 py-1 text-gray-400 hover:text-gray-200"
+                    className="text-[10px] px-1.5 py-1 text-mute"
                     title="修改"
                   >
                     编辑
@@ -335,7 +328,7 @@ export function TagEditor({
                         if (editingId === tag.id) setEditingId(null);
                       });
                     }}
-                    className="text-[10px] px-1.5 py-1 text-red-400/80 hover:text-red-300"
+                    className="text-[10px] px-1.5 py-1 text-berry"
                     title="删除"
                   >
                     删除
@@ -345,8 +338,8 @@ export function TagEditor({
             })}
           </div>
 
-          <div className="pt-2 border-t border-gray-700/60 space-y-2">
-            <div className="text-[10px] text-gray-500">新建标签并绑定到此计划</div>
+          <div className="pt-2 space-y-2" style={{ borderTop: "1px solid var(--line)" }}>
+            <div className="text-[10px] text-mute">新建标签并绑定到此计划</div>
             <div className="flex items-center gap-2 flex-wrap">
               <input
                 value={newName}
@@ -354,13 +347,14 @@ export function TagEditor({
                 onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
                 maxLength={20}
                 placeholder="标签名"
-                className="flex-1 min-w-[8rem] bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-sky-500"
+                className="flex-1 min-w-[8rem] field-input h-9 text-xs"
               />
               <button
                 type="button"
                 onClick={handleCreate}
                 disabled={busy || !newName.trim()}
-                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg text-xs font-medium transition-colors"
+                className="primary disabled:opacity-50"
+                style={{ padding: "8px 14px" }}
               >
                 添加
               </button>

@@ -72,7 +72,7 @@ export default function BlankPracticePage() {
 
   if (minutes === null) {
     return (
-      <div className="flex items-center justify-center py-32 text-gray-500">加载中…</div>
+      <div className="study"><div className="empty">加载中…</div></div>
     );
   }
 
@@ -80,34 +80,31 @@ export default function BlankPracticePage() {
   const pct = totalSeconds > 0 ? Math.min(100, ((totalSeconds - remaining) / totalSeconds) * 100) : 0;
 
   return (
-    <div className="fixed inset-0 bg-emerald-950 flex flex-col items-center justify-center text-emerald-100 z-[45]">
+    <div className="study items-center justify-center" style={{ background: "#14301f", color: "#e6f7ee" }}>
       <button
         onClick={() => navigate("/")}
-        className="absolute top-4 left-4 text-emerald-400 hover:text-emerald-200 text-sm transition-colors"
+        className="absolute top-4 left-4 text-sm opacity-80"
       >
         ← 返回
       </button>
 
-      <p className="text-emerald-400 text-lg mb-2">📝 空白练习</p>
+      <p className="text-lg mb-2" style={{ color: "#7ed9a8" }}>📝 空白练习</p>
       <div className="text-7xl font-mono font-bold mb-6 tabular-nums">{formatClock(remaining)}</div>
 
-      <div className="w-64 h-1.5 bg-emerald-900/60 rounded-full overflow-hidden mb-8">
-        <div className="h-full bg-emerald-400 transition-all" style={{ width: `${pct}%` }} />
+      <div className="w-64 h-1.5 rounded-full overflow-hidden mb-8" style={{ background: "rgba(61,191,122,0.25)" }}>
+        <div className="h-full transition-all" style={{ width: `${pct}%`, background: "var(--leaf)" }} />
       </div>
 
       <div className="flex items-center gap-4">
         {running ? (
-          <button
-            onClick={() => setRunning(false)}
-            className="px-6 py-3 bg-emerald-800 hover:bg-emerald-700 rounded-lg text-white font-medium transition-colors"
-          >
+          <button onClick={() => setRunning(false)} className="primary">
             暂停
           </button>
         ) : (
           <button
             onClick={() => setRunning(true)}
             disabled={remaining <= 0 || completing}
-            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-lg text-white font-medium transition-colors"
+            className="primary disabled:opacity-50"
           >
             继续
           </button>

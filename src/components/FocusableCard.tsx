@@ -38,7 +38,7 @@ export function FocusableCard({ children, onClick, className = "", tabIndex = 0 
       tabIndex={tabIndex}
       onClick={onClick}
       onKeyDown={handleKeyDown}
-      className={`cursor-pointer select-none focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-gray-950 ${className}`}
+      className={`cursor-pointer select-none ${className}`}
     >
       {children}
     </div>

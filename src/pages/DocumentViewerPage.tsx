@@ -20,12 +20,12 @@ function OverlayTopBar({
   title: string; onClose: () => void; extra?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-900 border-b border-gray-800">
-      <span className="text-sm text-gray-200 truncate flex-1">{title}</span>
+    <div className="flex items-center gap-3 px-4 py-2.5" style={{ background: "#1c1814", color: "#f5efe6" }}>
+      <span className="text-sm truncate flex-1">{title}</span>
       {extra}
       <button
         onClick={onClose}
-        className="text-xl text-gray-400 hover:text-gray-100 leading-none px-2 transition-colors shrink-0"
+        className="text-xl opacity-70 leading-none px-2 shrink-0"
         aria-label="关闭"
       >
         ×
@@ -97,13 +97,15 @@ export default function DocumentViewerPage() {
 
   const goBack = () => navigate(`/plan/${pId}`);
 
-  if (loading) return <div className="text-center text-gray-500 py-16">加载中…</div>;
+  if (loading) return <div className="study"><div className="empty">加载中…</div></div>;
 
   if (!video) {
     return (
-      <div className="text-center text-gray-500 py-16">
-        <p>文件未找到</p>
-        <button onClick={() => navigate(-1)} className="mt-4 text-sky-400 text-sm">返回</button>
+      <div className="study">
+        <div className="empty">
+          <p>文件未找到</p>
+          <button onClick={() => navigate(-1)} className="primary mt-4">返回</button>
+        </div>
       </div>
     );
   }
@@ -114,39 +116,33 @@ export default function DocumentViewerPage() {
   // If opening with system failed, show error page
   if (!isImage && openError) {
     return (
-      <div>
-        <div className="flex items-center gap-2 mb-3 text-sm text-gray-500">
-          <button onClick={() => navigate("/")} className="hover:text-gray-300 transition-colors">首页</button>
+      <div className="study">
+        <div className="flex items-center gap-2 mb-3 text-sm opacity-70">
+          <button onClick={() => navigate("/")}>首页</button>
           <span>/</span>
-          <button onClick={goBack} className="hover:text-gray-300 transition-colors truncate max-w-[160px]">
+          <button onClick={goBack} className="truncate max-w-[160px]">
             {plan?.name ?? "计划"}
           </button>
         </div>
 
-        <h1 className="text-lg font-semibold text-gray-100 mb-3 leading-tight">
-          <span className="text-amber-400 mr-2">📄</span>
+        <h1 className="text-lg font-semibold mb-3 leading-tight">
+          <span className="mr-2">📄</span>
           {video.title}
         </h1>
 
-        <div className="flex flex-col items-center justify-center py-16 px-6 bg-gray-900 rounded-xl">
+        <div className="flex flex-col items-center justify-center py-16 px-6 rounded-xl" style={{ background: "#2a221c" }}>
           <div className="text-5xl mb-4">⚠️</div>
-          <p className="text-red-400 text-sm text-center mb-1">{openError}</p>
-          <p className="text-gray-600 text-xs text-center mt-2">{video.title}</p>
+          <p className="text-sm text-center mb-1" style={{ color: "#f0a0a8" }}>{openError}</p>
+          <p className="text-xs text-center mt-2 opacity-60">{video.title}</p>
         </div>
 
         <div className="mt-4 flex flex-col items-start gap-2">
-          <button
-            onClick={handleOpenWithSystem}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors"
-          >
+          <button onClick={handleOpenWithSystem} className="primary">
             ↗ 重试打开
           </button>
         </div>
 
-        <button
-          onClick={goBack}
-          className="mt-4 text-sm text-gray-500 hover:text-gray-300 transition-colors"
-        >
+        <button onClick={goBack} className="mt-4 text-sm opacity-70">
           ← 返回计划目录
         </button>
       </div>
@@ -163,9 +159,9 @@ export default function DocumentViewerPage() {
           onClose={goBack}
           extra={
             <div className="flex items-center gap-1 shrink-0">
-              <button onClick={() => panZoom.zoomBy(1 / 1.25)} className="w-7 h-7 flex items-center justify-center text-sm bg-gray-800 hover:bg-gray-700 rounded text-gray-300 transition-colors">−</button>
-              <button onClick={panZoom.reset} className="px-2 h-7 flex items-center justify-center text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-300 transition-colors">{Math.round(panZoom.scale * 100)}%</button>
-              <button onClick={() => panZoom.zoomBy(1.25)} className="w-7 h-7 flex items-center justify-center text-sm bg-gray-800 hover:bg-gray-700 rounded text-gray-300 transition-colors">+</button>
+              <button onClick={() => panZoom.zoomBy(1 / 1.25)} className="w-7 h-7 flex items-center justify-center text-sm rounded bg-white/10">−</button>
+              <button onClick={panZoom.reset} className="px-2 h-7 flex items-center justify-center text-xs rounded bg-white/10">{Math.round(panZoom.scale * 100)}%</button>
+              <button onClick={() => panZoom.zoomBy(1.25)} className="w-7 h-7 flex items-center justify-center text-sm rounded bg-white/10">+</button>
             </div>
           }
         />
@@ -200,15 +196,17 @@ export default function DocumentViewerPage() {
   // Image load failed, show fallback
   if (isImage && imageFailed) {
     return (
-      <div className="text-center text-gray-500 py-16">
-        <p>图片加载失败</p>
-        <p className="text-sm text-gray-600 mt-2">{video.title}</p>
-        <button onClick={goBack} className="mt-4 text-sky-400 text-sm">返回</button>
+      <div className="study">
+        <div className="empty">
+          <p>图片加载失败</p>
+          <p className="hint">{video.title}</p>
+          <button onClick={goBack} className="primary">返回</button>
+        </div>
       </div>
     );
   }
 
   // Non-image documents should have already triggered system open on mount —
   // this fallback shouldn't normally be reached, but show loading just in case
-  return <div className="text-center text-gray-500 py-16">打开中…</div>;
+  return <div className="study"><div className="empty">打开中…</div></div>;
 }

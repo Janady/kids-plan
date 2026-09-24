@@ -1,39 +1,30 @@
 @import "tailwindcss";
+@import "./styles/app.css";
+
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-paper: var(--card);
+  --color-ink: var(--ink);
+  --color-mute: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-sun: var(--sun);
+  --color-leaf: var(--leaf);
+  --color-grape: var(--grape);
+  --color-berry: var(--berry);
+  --color-video: var(--sky);
+  --color-chip: var(--chip);
+  --color-good: var(--good-bg);
+  --color-bad: var(--bad-bg);
+  --color-grape-bg: var(--grape-bg);
+  --color-sky-bg: var(--sky-bg);
+  --color-sun-bg: var(--sun-bg);
+  --font-sans: var(--font);
+}
 
 @layer base {
   :root {
-    font-family: Inter, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
-    /* Overridden from Android MainActivity with the real status-bar overlap. */
     --android-sat: env(safe-area-inset-top, 0px);
   }
-
-  *:focus-visible {
-    outline: 3px solid #38bdf8;
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
 }
-
-/* Audio task card animations */
-@keyframes vinylspin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes eq {
-  from { transform: scaleY(0.35); }
-  to { transform: scaleY(1); }
-}
-
-/* Skip-playback disabled: hide the native seek bar so it can't be dragged
-   ahead. Chromium (WebView2 on Windows, WebView on Android) exposes the
-   scrubber as this pseudo-element; other controls (play/pause, volume,
-   time) are unaffected. The onSeeking JS snap-back in PlayerPage.tsx stays
-   as a backstop for input paths that don't go through this element (e.g.
-   hardware media keys), but hiding it removes the visible jump entirely. */
-video.no-seek::-webkit-media-controls-timeline,
-audio.no-seek::-webkit-media-controls-timeline {
-  display: none !important;
-}
-
