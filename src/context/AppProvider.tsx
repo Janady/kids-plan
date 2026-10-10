@@ -3,7 +3,7 @@ import { AppContext } from "./AppContext";
 import { getSetting, setSetting } from "../api/settings";
 import { getTodayWatchedSeconds, getTodayAudioSeconds, getContinuousWatchSeconds } from "../api/sessions";
 import { listBackgroundAudio } from "../api/plans";
-import { castPause, castSwitchVideo, getCastState, onCastStateChanged } from "../api/cast";
+import { castPause, castSwitchVideo, getCastState, onCastStateChanged, setCastKeepAwake } from "../api/cast";
 import type { BlockedTimeRange, BackgroundAudioPlan, LoopMode, CastQueueItem, CastStateSnapshot } from "../types";
 
 const DEFAULT_DAILY_LIMIT = 3600;
@@ -277,24 +277,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     && castSnapshot.phase !== "stopped"
     && castSnapshot.phase !== "error";
 
-  // Keep the screen awake while a cast session is active — on Android, once
-  // the screen sleeps the WebView/app process gets throttled by the OS,
-  // stalling the Tokio runtime that drives the cast session and the LAN
-  // server the renderer streams from, silently breaking the cast. The Wake
-  // Lock spec auto-releases the sentinel when the document goes hidden and
-  // does NOT auto-reacquire on return — only guards against *automatic*
-  // screen timeout, not a manual power-button lock.
+  // Keep the screen awake while a cast session is active. Once the display
+  // sleeps, Android freezes this process and the LAN server stops feeding the
+  // TV. The WebView Screen Wake Lock is a no-op on many tablets, so Android
+  // also sets FLAG_KEEP_SCREEN_ON plus a partial wake lock.
   useEffect(() => {
-    if (!isCastActive || !("wakeLock" in navigator)) return;
+    void setCastKeepAwake(isCastActive);
+    if (!isCastActive || !("wakeLock" in navigator)) {
+      return () => { void setCastKeepAwake(false); };
+    }
 
     let cancelled = false;
     const acquire = async () => {
       try {
         const sentinel = await navigator.wakeLock.request("screen");
         if (cancelled) { sentinel.release().catch(() => {}); return; }
+        sentinel.addEventListener("release", () => {
+          if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
+        });
         wakeLockRef.current = sentinel;
       } catch {
-        // Request can be rejected (e.g. low battery) — nothing to do.
+        // Request can be rejected (e.g. low battery) — the native lock still holds.
       }
     };
     acquire();
@@ -309,6 +312,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       wakeLockRef.current?.release().catch(() => {});
       wakeLockRef.current = null;
+      void setCastKeepAwake(false);
     };
   }, [isCastActive]);
 

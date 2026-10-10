@@ -6,4 +6,5 @@ pub mod schedule;
 pub mod stats;
 pub mod document_opener;
 pub mod background_playback;
+pub mod cast_wake;
 pub mod tags;

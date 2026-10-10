@@ -86,6 +86,9 @@ class MainActivity : TauriActivity() {
   override fun onDestroy() {
     if (instance === this) instance = null
     keepAliveHandler.removeCallbacksAndMessages(null)
+    // Drop the lock object with this activity. `enabled` stays set so a
+    // recreated activity can reacquire it from onResume.
+    CastWakePlugin.releaseLock()
     super.onDestroy()
   }
 
@@ -93,6 +96,9 @@ class MainActivity : TauriActivity() {
     super.onResume()
     keepAliveHandler.removeCallbacksAndMessages(null)
     webView?.let { ViewCompat.requestApplyInsets(it) }
+    // Some tablets drop FLAG_KEEP_SCREEN_ON across onPause. Re-apply while a
+    // cast session is still marked active.
+    CastWakePlugin.reapply(this)
   }
 
   private fun keepWebViewAlive() {

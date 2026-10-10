@@ -37,3 +37,4 @@
 # Background-music foreground service (started by class name from an Intent)
 -keep class com.janady.video_plan.BgPlaybackService { *; }
 -keep class com.janady.video_plan.BackgroundPlaybackPlugin { *; }
+-keep class com.janady.video_plan.CastWakePlugin { *; }

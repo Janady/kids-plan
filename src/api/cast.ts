@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { IS_ANDROID } from "../hooks/usePlatform";
 import type { CastQueueItem, CastStateSnapshot, RendererInfo } from "../types";
 
 export const discoverRenderers = (timeoutMs?: number): Promise<RendererInfo[]> =>
@@ -27,3 +28,18 @@ export const onCastStateChanged = (
   handler: (snapshot: CastStateSnapshot) => void
 ): Promise<UnlistenFn> =>
   listen<CastStateSnapshot>("cast://state-changed", (event) => handler(event.payload));
+
+// Serialized so a cleanup "off" cannot land after the next session's "on".
+let keepAwakeChain: Promise<void> = Promise.resolve();
+
+export function setCastKeepAwake(enabled: boolean): Promise<void> {
+  if (!IS_ANDROID) return Promise.resolve();
+  const run = keepAwakeChain.then(() =>
+    invoke("set_cast_keep_awake", { enabled }).then(
+      () => {},
+      () => {},
+    ),
+  );
+  keepAwakeChain = run;
+  return run;
+}
